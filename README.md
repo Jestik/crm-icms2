@@ -1,5 +1,4 @@
-# crm-icms2
-CRM for InstantCMS 2
+# CRM for InstantCMS 2
 
 **Набор дополнений для организации мини CRM системы на базе InstantCMS 2**
 
