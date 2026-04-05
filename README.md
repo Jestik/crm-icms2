@@ -5,11 +5,12 @@
 **Краткие пояснения:**
 
 * **Поля:**
-  * [expenses.php](https://github.com/Jestik/crm-icms2/blob/main/package/system/fields/expenses.php) — считает расходы и доходы участников сделки
-  * [multifile.php](https://github.com/Jestik/crm-icms2/blob/main/package/system/fields/multifile.php) — позволяет загружать файлы к записи
-  * [phone.php](https://github.com/Jestik/crm-icms2/blob/main/package/system/fields/phone.php) — выводит телефон и мессенджеры
-  * [profit.php](https://github.com/Jestik/crm-icms2/blob/main/package/system/fields/profit.php) — считает сумму дочерних записей типа контента
-  * [recordid.php](https://github.com/Jestik/crm-icms2/blob/main/package/system/fields/recordid.php) — выводит ID записи, возможно использовать как артикул
+  * [expenses.php](https://github.com/Jestik/crm-icms2/blob/main/package/system/fields/expenses.php) — CRM Калькулятор, считает расходы и доходы участников сделки
+  * [multifile.php](https://github.com/Jestik/crm-icms2/blob/main/package/system/fields/multifile.php) — Мультифайл (список файлов), позволяет загружать файлы к записи
+  * [phone.php](https://github.com/Jestik/crm-icms2/blob/main/package/system/fields/phone.php) — Телефон с мессенджерами, выводит телефон и мессенджеры
+  * [profit.php](https://github.com/Jestik/crm-icms2/blob/main/package/system/fields/profit.php) — Окупаемость / Прибыль, считает сумму дочерних записей типа контента
+  * [recordid.php](https://github.com/Jestik/crm-icms2/blob/main/package/system/fields/recordid.php) — ID записи, выводит ID записи, возможно использовать как артикул
+  * [tripcost.php](https://github.com/Jestik/crm-icms2/blob/main/package/system/fields/tripcost.php) — Калькулятор поездки, считает стоимость поездки с амортизацией ТЗ
 * **Виджеты:**
   * [crm_chart](https://github.com/Jestik/crm-icms2/tree/main/package/system/widgets/crm_chart) — выводит график сделок
 * **Шаблоны вывода списка:**
