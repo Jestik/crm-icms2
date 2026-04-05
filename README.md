@@ -10,7 +10,7 @@
   * [phone.php](https://github.com/Jestik/crm-icms2/blob/main/package/system/fields/phone.php) — Телефон с мессенджерами, выводит телефон и мессенджеры
   * [profit.php](https://github.com/Jestik/crm-icms2/blob/main/package/system/fields/profit.php) — Окупаемость / Прибыль, считает сумму дочерних записей типа контента
   * [recordid.php](https://github.com/Jestik/crm-icms2/blob/main/package/system/fields/recordid.php) — ID записи, выводит ID записи, возможно использовать как артикул
-  * [tripcost.php](https://github.com/Jestik/crm-icms2/blob/main/package/system/fields/tripcost.php) — Калькулятор поездки, считает стоимость поездки с амортизацией ТЗ
+  * [tripcost.php](https://github.com/Jestik/crm-icms2/blob/main/package/system/fields/tripcost.php) — Калькулятор поездки, считает стоимость поездки с амортизацией ТС
 * **Виджеты:**
   * [crm_chart](https://github.com/Jestik/crm-icms2/tree/main/package/system/widgets/crm_chart) — выводит график сделок
 * **Шаблоны вывода списка:**
