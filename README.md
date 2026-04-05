@@ -1,6 +1,6 @@
 # CRM for InstantCMS 2
 
-**Набор дополнений для организации мини CRM системы на базе InstantCMS 2**
+**Набор дополнений для организации мини CRM системы на базе [InstantCMS 2](https://github.com/instantsoft/icms2)**
 
 **Краткие пояснения:**
 
