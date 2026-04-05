@@ -6,6 +6,21 @@ class fieldExpenses extends cmsFormField {
     public $sql   = 'text';
     public $allow_index = false;
 
+    public function getOptions(){
+        return array(
+            new fieldString('income_field_name', array(
+                'title'   => 'Системное имя поля "Приход"',
+                'hint'    => 'Укажите системное имя числового поля (по умолчанию: income)',
+                'default' => 'income'
+            )),
+            new fieldString('currency', array(
+                'title'   => 'Валюта',
+                'hint'    => 'Например: руб., $, €',
+                'default' => '€'
+            ))
+        );
+    }
+
     public function getInput($value) {
         
         $users_model = cmsCore::getModel('users');
@@ -21,6 +36,8 @@ class fieldExpenses extends cmsFormField {
         $current_data = htmlspecialchars((string)($value ? $value : '[]'));
         $field_name = $this->name;
         $label = $this->title;
+        
+        $currency = $this->getOption('currency', '€');
 
         $html_template = <<<'HTML'
         <style>
@@ -51,7 +68,7 @@ class fieldExpenses extends cmsFormField {
                 
                 <div class="crm-footer-summary">
                     <span style="margin-right: 10px;">Итоговая сумма расходов:</span>
-                    <span id="calc-total" class="text-danger">0</span>
+                    <span id="calc-total" class="text-danger">0</span>&nbsp;<span class="text-danger">{CURRENCY}</span>
                 </div>
 
                 <input type="hidden" name="{FIELD_NAME}" id="expenses-data" value="{CURRENT_DATA}">
@@ -124,8 +141,8 @@ class fieldExpenses extends cmsFormField {
 HTML;
 
         return str_replace(
-            ['{FIELD_NAME}', '{CURRENT_DATA}', '{USER_OPTIONS}', '{FIELD_TITLE}'],
-            [$field_name, $current_data, $user_options, $label],
+            ['{FIELD_NAME}', '{CURRENT_DATA}', '{USER_OPTIONS}', '{FIELD_TITLE}', '{CURRENCY}'],
+            [$field_name, $current_data, $user_options, $label, $currency],
             $html_template
         );
     }
@@ -148,11 +165,13 @@ HTML;
             }
         }
 
-        $income = (float)($this->item['income'] ?? 0);
+        $income_field = $this->getOption('income_field_name', 'income');
+        $currency     = $this->getOption('currency', 'руб.');
+
+        $income = (float)($this->item[$income_field] ?? 0);
         $net_profit = $income - $total_expenses;
         $participants_count = count($users_map);
         
-        // Считаем долю только если есть приход
         $profit_per_person = ($income > 0 && $participants_count > 0) ? ($net_profit / $participants_count) : 0;
 
         $html = '<div class="field_expenses_view" style="margin-top: 10px;">';
@@ -172,31 +191,29 @@ HTML;
         foreach($data as $item){
             $html .= '<tr>';
             $html .= '<td style="padding: 10px; border-bottom: 1px solid #dee2e6; border-right: 1px solid #dee2e6;">'.htmlspecialchars($item['title']).'</td>';
-            $html .= '<td style="padding: 10px; border-bottom: 1px solid #dee2e6; border-right: 1px solid #dee2e6;">'.number_format($item['cost'], 0, '.', ' ').'</td>';
+            $html .= '<td style="padding: 10px; border-bottom: 1px solid #dee2e6; border-right: 1px solid #dee2e6;">'.number_format($item['cost'], 0, '.', ' ') . ' ' . $currency . '</td>';
             $html .= '<td style="padding: 10px; border-bottom: 1px solid #dee2e6;">'.htmlspecialchars($item['user_name']).'</td>';
             $html .= '</tr>';
         }
 
-        // Итоговые строки
         $html .= '<tr style="background: #fcfcfc;">';
         $html .= '<td style="text-align: right; padding: 10px; border-bottom: 1px solid #dee2e6; border-right: 1px solid #dee2e6;"><strong>Общий приход:</strong></td>';
-        $html .= '<td style="padding: 10px; border-bottom: 1px solid #dee2e6; border-right: 1px solid #dee2e6;">' . number_format($income, 0, '.', ' ') . '</td>';
+        $html .= '<td style="padding: 10px; border-bottom: 1px solid #dee2e6; border-right: 1px solid #dee2e6;">' . number_format($income, 0, '.', ' ') . ' ' . $currency . '</td>';
         $html .= '<td style="border-bottom: 1px solid #dee2e6;"></td>';
         $html .= '</tr>';
         
         $html .= '<tr style="background: #fcfcfc;">';
         $html .= '<td style="text-align: right; padding: 10px; border-bottom: 1px solid #dee2e6; border-right: 1px solid #dee2e6;"><strong>Общие расходы:</strong></td>';
-        $html .= '<td style="padding: 10px; border-bottom: 1px solid #dee2e6; border-right: 1px solid #dee2e6; color: #d33;">-' . number_format($total_expenses, 0, '.', ' ') . '</td>';
+        $html .= '<td style="padding: 10px; border-bottom: 1px solid #dee2e6; border-right: 1px solid #dee2e6; color: #d33;">-' . number_format($total_expenses, 0, '.', ' ') . ' ' . $currency . '</td>';
         $html .= '<td style="border-bottom: 1px solid #dee2e6;"></td>';
         $html .= '</tr>';
 
         $html .= '<tr style="background: #f0fff4;">';
         $html .= '<td style="text-align: right; padding: 10px; border-bottom: 1px solid #dee2e6; border-right: 1px solid #dee2e6;"><strong>Чистая прибыль:</strong></td>';
-        $html .= '<td style="padding: 10px; border-bottom: 1px solid #dee2e6; border-right: 1px solid #dee2e6;"><strong style="color: #28a745;">' . number_format($net_profit, 0, '.', ' ') . '</strong></td>';
+        $html .= '<td style="padding: 10px; border-bottom: 1px solid #dee2e6; border-right: 1px solid #dee2e6;"><strong style="color: #28a745;">' . number_format($net_profit, 0, '.', ' ') . ' ' . $currency . '</strong></td>';
         $html .= '<td style="border-bottom: 1px solid #dee2e6;"></td>';
         $html .= '</tr>';
 
-        // Секция выплат участникам
         if ($participants_count > 0) {
             $html .= '<tr><td colspan="3" style="padding: 15px; background: #fff;">';
             
@@ -209,10 +226,10 @@ HTML;
             foreach ($users_map as $user) {
                 $payout = $profit_per_person + $user['spent'];
                 $html .= '<div style="margin-top:4px;">';
-                $html .= '🔹 ' . htmlspecialchars($user['name']) . ': <b>' . number_format($payout, 2, '.', ' ') . '</b> ';
+                $html .= '🔹 ' . htmlspecialchars($user['name']) . ': <b>' . number_format($payout, 2, '.', ' ') . ' ' . $currency . '</b> ';
                 
                 if ($income > 0) {
-                    $html .= '<span style="color:#888;">(чистая доля ' . number_format($profit_per_person, 0, '.', ' ') . ' + возврат потраченных ' . number_format($user['spent'], 0, '.', ' ') . ')</span>';
+                    $html .= '<span style="color:#888;">(чистая доля ' . number_format($profit_per_person, 0, '.', ' ') . ' ' . $currency . ' + возврат потраченных ' . number_format($user['spent'], 0, '.', ' ') . ' ' . $currency . ')</span>';
                 } else {
                     $html .= '<span style="color:#888;">(только возврат потраченных средств)</span>';
                 }
