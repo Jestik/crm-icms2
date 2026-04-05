@@ -1,4 +1,5 @@
 <?php
+declare(strict_types=1);
 
 class fieldMultifile extends fieldFile {
 
@@ -11,11 +12,11 @@ class fieldMultifile extends fieldFile {
     }
 
     public function getOptions() {
-        $max_size = files_convert_bytes(ini_get('post_max_size')) / 1048576;
+        $max_size = (int)(files_convert_bytes(ini_get('post_max_size')) / 1048576);
         return [
             new fieldString('extensions', [
                 'title'   => LANG_PARSER_FILE_EXTS,
-                'hint'    => 'Например: pdf,doc,docx,xls,xlsx,txt,zip,rar,png,jpg',
+                'hint'    => 'Без пробелов. Например: pdf,doc,docx,xls,xlsx,txt,zip,rar,png,jpg',
                 'default' => 'pdf,doc,docx,xls,xlsx,txt,zip,rar,png,jpg'
             ]),
             new fieldNumber('max_size_mb', [
@@ -30,7 +31,7 @@ class fieldMultifile extends fieldFile {
             ]),
             new fieldCheckbox('allow_download', [
                 'title'   => 'Разрешить скачивание файлов',
-                'hint'    => 'Показывать кнопку "Скачать" для каждого файла',
+                'hint'    => 'Показывать кнопку "Скачать"',
                 'default' => true
             ]),
             new fieldCheckbox('allow_zip', [
@@ -41,446 +42,746 @@ class fieldMultifile extends fieldFile {
         ];
     }
 
-    public function getRules() { return $this->rules; }
+    public function getRules() { 
+        return $this->rules; 
+    }
+
+    private function getSafeYamlData($value): array {
+        if (is_array($value)) return $value;
+        $val_str = (string)$value;
+        if ($val_str === '' || $val_str === '[]') return [];
+        try {
+            $data = cmsModel::yamlToArray($val_str);
+            return is_array($data) ? $data : [];
+        } catch (\Throwable $e) {
+            return [];
+        }
+    }
 
     public function parse($value) {
-        $files = is_array($value) ? $value : cmsModel::yamlToArray($value);
-        if (empty($files) || !is_array($files)) {
+        $files = $this->getSafeYamlData($value);
+        if (empty($files)) {
             return '';
         }
 
-        $upload_host    = cmsConfig::getInstance()->upload_host;
-        $upload_path    = cmsConfig::getInstance()->upload_path;
-        $allow_view     = $this->getOption('allow_view');
-        $allow_download = $this->getOption('allow_download');
-        $allow_zip      = $this->getOption('allow_zip');
+        $config = cmsConfig::getInstance();
+        $upload_host    = $config->upload_host;
+        $upload_path    = realpath($config->upload_path);
         
-        $zip_hash = md5(serialize($files) . $this->name); 
+        if ($upload_path === false) {
+            return ''; 
+        }
 
-        // Генерация ZIP на лету
-        if ($allow_zip && isset($_GET['download_zip']) && isset($_GET['hash']) && $_GET['hash'] === $zip_hash) {
+        $allow_view     = (bool)$this->getOption('allow_view');
+        $allow_download = (bool)$this->getOption('allow_download');
+        $allow_zip      = (bool)$this->getOption('allow_zip');
+        
+        $item_id = $this->item['id'] ?? 0;
+        $secret_key = $config->db_pass . ':' . $config->db_base . ':' . $config->root;
+        
+        try {
+            $files_json = json_encode($files, JSON_THROW_ON_ERROR);
+        } catch (\JsonException $e) {
+            return '';
+        }
+        
+        $zip_hash = hash_hmac('sha256', $this->name . ':' . $files_json . ':' . $item_id, $secret_key); 
+
+        if ($allow_zip && isset($_GET['download_zip'], $_GET['hash']) && hash_equals($zip_hash, (string)$_GET['hash'])) {
+            
+            if (!cmsUser::isLogged()) {
+                cmsCore::error404();
+            }
+
             $zip_name = 'archive_' . date('Y-m-d_H-i-s') . '.zip';
-            $zip_tmp_path = $upload_path . 'archive_' . uniqid() . '.zip';
+            $zip_tmp_path = $upload_path . DIRECTORY_SEPARATOR . 'archive_' . bin2hex(random_bytes(16)) . '.zip';
+            
+            register_shutdown_function(static function() use ($zip_tmp_path) {
+                if (file_exists($zip_tmp_path)) {
+                    if (!unlink($zip_tmp_path)) {
+                        error_log('fieldMultifile: не удалось удалить временный архив ZIP: ' . $zip_tmp_path);
+                    }
+                }
+            });
             
             $zip = new ZipArchive();
-            if ($zip->open($zip_tmp_path, ZipArchive::CREATE | ZipArchive::OVERWRITE) === TRUE) {
+            if ($zip->open($zip_tmp_path, ZipArchive::CREATE | ZipArchive::OVERWRITE) === true) {
+                
                 foreach ($files as $file) {
-                    $file_server_path = $upload_path . $file['path'];
-                    if (file_exists($file_server_path)) {
-                        $ext = pathinfo($file['path'], PATHINFO_EXTENSION);
-                        $name = !empty($file['custom_name']) ? $file['custom_name'] : $file['name'];
+                    if (empty($file['path'])) continue;
+                    
+                    $file_real_path = realpath($upload_path . DIRECTORY_SEPARATOR . ltrim((string)$file['path'], '/\\'));
+                    
+                    if ($file_real_path !== false && str_starts_with($file_real_path, $upload_path) && is_file($file_real_path)) {
+                        $ext = pathinfo($file_real_path, PATHINFO_EXTENSION);
+                        $name = !empty($file['custom_name']) ? (string)$file['custom_name'] : (string)$file['name'];
+                        
+                        $name = str_replace(['/', '\\', "\0"], '_', $name); 
+
                         if (strtolower(pathinfo($name, PATHINFO_EXTENSION)) !== strtolower($ext)) {
                             $name .= '.' . $ext;
                         }
-                        $zip->addFile($file_server_path, $name);
+                        $zip->addFile($file_real_path, $name);
                     }
                 }
                 $zip->close();
                 
-                while (ob_get_level()) ob_end_clean();
+                while (ob_get_level()) { ob_end_clean(); }
+                
                 header('Content-Type: application/zip');
                 header('Content-Disposition: attachment; filename="' . $zip_name . '"');
                 header('Content-Length: ' . filesize($zip_tmp_path));
                 header('Pragma: no-cache');
+                
                 readfile($zip_tmp_path);
-                @unlink($zip_tmp_path); 
+                
+                if (file_exists($zip_tmp_path) && !unlink($zip_tmp_path)) {
+                    error_log('fieldMultifile: не удалось удалить временный архив после отдачи: ' . $zip_tmp_path);
+                }
                 exit;
             }
         }
 
         ob_start();
-        ?>
-        <style>
-            .multifile-list { list-style: none; padding: 0; margin: 15px 0; border: 1px solid #e2e8f0; border-radius: 6px; overflow: hidden; }
-            .multifile-item { display: flex; align-items: center; padding: 12px 15px; border-bottom: 1px solid #e2e8f0; background: #fff; transition: background 0.2s; }
-            .multifile-item:last-child { border-bottom: none; }
-            .multifile-item:hover { background: #f8fafc; }
-            .multifile-icon { margin-right: 12px; color: #64748b; display: flex; align-items: center; justify-content: center; }
-            .multifile-info { flex-grow: 1; min-width: 0; }
-            .multifile-name { font-weight: 500; color: #334155; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; display: block; }
-            .multifile-meta { font-size: 12px; color: #94a3b8; margin-top: 2px; display: block; }
-            .multifile-actions { display: flex; gap: 8px; margin-left: 15px; flex-shrink: 0; }
-            .multifile-btn { padding: 6px 12px; border-radius: 4px; font-size: 13px; text-decoration: none; font-weight: 500; transition: all 0.2s; display: inline-flex; align-items: center; justify-content: center; cursor: pointer; }
-            .multifile-btn-view { background: #e0f2fe; color: #0284c7; }
-            .multifile-btn-view:hover { background: #bae6fd; color: #0369a1; text-decoration: none; }
-            .multifile-btn-download { background: #f1f5f9; color: #475569; border: 1px solid #e2e8f0; }
-            .multifile-btn-download:hover { background: #e2e8f0; color: #334155; text-decoration: none; }
-            .multifile-zip-btn { display: inline-block; margin-top: 10px; padding: 8px 16px; background: #3b82f6; color: #fff; border-radius: 4px; font-weight: 500; text-decoration: none; font-size: 14px; transition: background 0.2s; }
-            .multifile-zip-btn:hover { background: #2563eb; color: #fff; text-decoration: none; }
-            
-            @media (max-width: 600px) {
-                .multifile-item { flex-wrap: wrap; }
-                .multifile-actions { margin-left: 0; margin-top: 10px; width: 100%; justify-content: flex-start; }
-                .multifile-meta { display: inline-block; margin-left: 10px; }
-            }
-        </style>
+        try {
+            ?>
+            <style>
+                .multifile-list { list-style: none; padding: 0; margin: 15px 0; border: 1px solid #e2e8f0; border-radius: 6px; overflow: hidden; }
+                .multifile-item { display: flex; align-items: center; padding: 12px 15px; border-bottom: 1px solid #e2e8f0; background: #fff; transition: background 0.2s; }
+                .multifile-item:last-child { border-bottom: none; }
+                .multifile-item:hover { background: #f8fafc; }
+                .multifile-icon { margin-right: 12px; color: #64748b; display: flex; align-items: center; justify-content: center; }
+                .multifile-info { flex-grow: 1; min-width: 0; }
+                .multifile-name { font-weight: 500; color: #334155; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; display: block; }
+                .multifile-meta { font-size: 12px; color: #94a3b8; margin-top: 2px; display: block; }
+                .multifile-actions { display: flex; gap: 8px; margin-left: 15px; flex-shrink: 0; }
+                .multifile-btn { padding: 6px 12px; border-radius: 4px; font-size: 13px; text-decoration: none; font-weight: 500; transition: all 0.2s; display: inline-flex; align-items: center; justify-content: center; cursor: pointer; }
+                .multifile-btn-view { background: #e0f2fe; color: #0284c7; }
+                .multifile-btn-view:hover { background: #bae6fd; color: #0369a1; text-decoration: none; }
+                .multifile-btn-download { background: #f1f5f9; color: #475569; border: 1px solid #e2e8f0; }
+                .multifile-btn-download:hover { background: #e2e8f0; color: #334155; text-decoration: none; }
+                .multifile-zip-btn { display: inline-block; margin-top: 10px; padding: 8px 16px; background: #3b82f6; color: #fff; border-radius: 4px; font-weight: 500; text-decoration: none; font-size: 14px; transition: background 0.2s; }
+                .multifile-zip-btn:hover { background: #2563eb; color: #fff; text-decoration: none; }
+                
+                @media (max-width: 600px) {
+                    .multifile-item { flex-wrap: wrap; }
+                    .multifile-actions { margin-left: 0; margin-top: 10px; width: 100%; justify-content: flex-start; }
+                    .multifile-meta { display: inline-block; margin-left: 10px; }
+                }
+            </style>
 
-        <ul class="multifile-list">
-            <?php foreach ($files as $file): ?>
-                <?php 
-                    $src = $upload_host . '/' . $file['path'];
-                    $raw_name = !empty($file['custom_name']) ? $file['custom_name'] : $file['name'];
-                    $ext = strtolower(pathinfo($file['path'], PATHINFO_EXTENSION));
+            <ul class="multifile-list">
+                <?php foreach ($files as $file): 
+                    if (!is_array($file) || empty($file['path'])) continue;
+                    
+                    $safe_path = str_replace(['../', '..\\', "\0"], '', ltrim((string)$file['path'], '/\\'));
+                    $src = $upload_host . '/' . $safe_path;
+                    
+                    $raw_name = !empty($file['custom_name']) ? (string)$file['custom_name'] : (string)($file['name'] ?? '');
+                    $ext = strtolower(pathinfo($safe_path, PATHINFO_EXTENSION));
                     
                     if (strtolower(pathinfo($raw_name, PATHINFO_EXTENSION)) !== $ext) {
                         $display_name = $raw_name . '.' . $ext;
                     } else {
                         $display_name = $raw_name;
                     }
-                    $display_name = htmlspecialchars($display_name, ENT_QUOTES);
+                    
+                    $display_name_esc = htmlspecialchars($display_name, ENT_QUOTES, 'UTF-8');
+                    $src_esc = htmlspecialchars($src, ENT_QUOTES, 'UTF-8');
 
                     $icon = 'file';
-                    if (in_array($ext, ['pdf'])) $icon = 'file-pdf';
-                    elseif (in_array($ext, ['doc', 'docx'])) $icon = 'file-word';
-                    elseif (in_array($ext, ['xls', 'xlsx', 'csv'])) $icon = 'file-excel';
-                    elseif (in_array($ext, ['zip', 'rar', '7z', 'tar', 'gz'])) $icon = 'file-archive';
-                    elseif (in_array($ext, ['jpg', 'jpeg', 'png', 'gif', 'webp', 'svg'])) $icon = 'file-image';
-                    elseif (in_array($ext, ['mp3', 'wav', 'ogg'])) $icon = 'file-audio';
-                    elseif (in_array($ext, ['mp4', 'avi', 'mkv', 'webm'])) $icon = 'file-video';
-                    elseif (in_array($ext, ['txt', 'md'])) $icon = 'file-alt';
+                    if (in_array($ext, ['pdf'], true)) $icon = 'file-pdf';
+                    elseif (in_array($ext, ['doc', 'docx'], true)) $icon = 'file-word';
+                    elseif (in_array($ext, ['xls', 'xlsx', 'csv'], true)) $icon = 'file-excel';
+                    elseif (in_array($ext, ['zip', 'rar', '7z', 'tar', 'gz'], true)) $icon = 'file-archive';
+                    elseif (in_array($ext, ['jpg', 'jpeg', 'png', 'gif', 'webp'], true)) $icon = 'file-image';
+                    elseif (in_array($ext, ['mp3', 'wav', 'ogg'], true)) $icon = 'file-audio';
+                    elseif (in_array($ext, ['mp4', 'avi', 'mkv', 'webm'], true)) $icon = 'file-video';
+                    elseif (in_array($ext, ['txt', 'md'], true)) $icon = 'file-alt';
 
-                    $size = isset($file['size']) ? files_format_bytes($file['size']) : '';
-                    $viewable_exts = ['pdf', 'txt', 'jpg', 'jpeg', 'png', 'gif', 'webp', 'mp4', 'webm', 'mp3', 'ogg', 'wav'];
-                    $can_view = $allow_view && in_array($ext, $viewable_exts);
-                ?>
-                <li class="multifile-item">
-                    <div class="multifile-icon">
-                        <svg class="icms-svg-icon" width="24" height="24"><use href="/templates/modern/images/icons/solid.svg#<?php echo $icon; ?>"></use></svg>
-                    </div>
-                    <div class="multifile-info">
-                        <span class="multifile-name" title="<?php echo $display_name; ?>"><?php echo $display_name; ?></span>
-                        <?php if($size): ?><span class="multifile-meta"><?php echo $size; ?></span><?php endif; ?>
-                    </div>
+                    $icon_esc = htmlspecialchars($icon, ENT_QUOTES, 'UTF-8');
+
+                    $size_str = isset($file['size']) ? files_format_bytes((int)$file['size']) : '';
+                    $size_esc = htmlspecialchars((string)$size_str, ENT_QUOTES, 'UTF-8');
                     
-                    <?php if ($can_view || $allow_download): ?>
-                        <div class="multifile-actions">
-                            <?php if ($can_view): ?>
-                                <a href="<?php echo $src; ?>" target="_blank" class="multifile-btn multifile-btn-view">Смотреть</a>
-                            <?php endif; ?>
-                            <?php if ($allow_download): ?>
-                                <a href="<?php echo $src; ?>" download="<?php echo $display_name; ?>" class="multifile-btn multifile-btn-download">Скачать</a>
-                            <?php endif; ?>
+                    $viewable_exts = ['pdf', 'txt', 'jpg', 'jpeg', 'png', 'gif', 'webp', 'mp4', 'webm', 'mp3', 'ogg', 'wav'];
+                    $can_view = $allow_view && in_array($ext, $viewable_exts, true);
+                ?>
+                    <li class="multifile-item">
+                        <div class="multifile-icon">
+                            <svg class="icms-svg-icon" width="24" height="24"><use href="/templates/modern/images/icons/solid.svg#<?php echo $icon_esc; ?>"></use></svg>
                         </div>
-                    <?php endif; ?>
-                </li>
-            <?php endforeach; ?>
-        </ul>
+                        <div class="multifile-info">
+                            <span class="multifile-name" title="<?php echo $display_name_esc; ?>"><?php echo $display_name_esc; ?></span>
+                            <?php if($size_esc): ?><span class="multifile-meta"><?php echo $size_esc; ?></span><?php endif; ?>
+                        </div>
+                        
+                        <?php if ($can_view || $allow_download): ?>
+                            <div class="multifile-actions">
+                                <?php if ($can_view): ?>
+                                    <a href="<?php echo $src_esc; ?>" target="_blank" rel="noopener noreferrer" class="multifile-btn multifile-btn-view">Смотреть</a>
+                                <?php endif; ?>
+                                <?php if ($allow_download): ?>
+                                    <a href="<?php echo $src_esc; ?>" download="<?php echo $display_name_esc; ?>" class="multifile-btn multifile-btn-download">Скачать</a>
+                                <?php endif; ?>
+                            </div>
+                        <?php endif; ?>
+                    </li>
+                <?php endforeach; ?>
+            </ul>
 
-        <?php if ($allow_zip && count($files) > 1): ?>
-            <?php 
-                $current_url = $_SERVER['REQUEST_URI'];
-                $separator = (strpos($current_url, '?') !== false) ? '&' : '?';
-                $zip_url = $current_url . $separator . 'download_zip=1&hash=' . $zip_hash;
+            <?php if ($allow_zip && count($files) > 1): 
+                $current_url = $_SERVER['REQUEST_URI'] ?? '/';
+                
+                $current_url = explode('#', $current_url, 2)[0];
+                
+                if (!str_starts_with($current_url, '/')) {
+                    $current_url = '/';
+                }
+                $separator = str_contains($current_url, '?') ? '&' : '?';
+                $zip_url = $current_url . $separator . 'download_zip=1&hash=' . urlencode($zip_hash);
             ?>
-            <a href="<?php echo htmlspecialchars($zip_url); ?>" class="multifile-zip-btn">
-                <svg class="icms-svg-icon" width="16" height="16" style="margin-right:6px; vertical-align:text-bottom;"><use href="/templates/modern/images/icons/solid.svg#file-archive"></use></svg>
-                Скачать все архивом
-            </a>
-        <?php endif; ?>
+                <a href="<?php echo htmlspecialchars($zip_url, ENT_QUOTES, 'UTF-8'); ?>" class="multifile-zip-btn">
+                    <svg class="icms-svg-icon" width="16" height="16" style="margin-right:6px; vertical-align:text-bottom;"><use href="/templates/modern/images/icons/solid.svg#file-archive"></use></svg>
+                    Скачать все архивом
+                </a>
+            <?php endif; ?>
 
-        <?php
-        return ob_get_clean();
+            <?php
+            return ob_get_clean();
+        } catch (\Throwable $e) {
+            ob_end_clean();
+            error_log('fieldMultifile::parse render error: ' . $e->getMessage());
+            return '';
+        }
     }
 
     public function getInput($value) {
-        $files = $value ? (is_array($value) ? $value : cmsModel::yamlToArray($value)) : [];
-        if (!is_array($files)) $files = [];
-        $uid = uniqid();
-        $name = $this->name;
+        $files = $this->getSafeYamlData($value);
+        
+        $uid = bin2hex(random_bytes(8)); 
+        $name_esc = htmlspecialchars((string)$this->name, ENT_QUOTES, 'UTF-8');
 
-        $svg_trash = '<svg class="icms-svg-icon" fill="currentColor" style="width:16px; height:16px; display:block;"><use href="/templates/modern/images/icons/solid.svg#times-circle"></use></svg>';
-
-        $exts = $this->getOption('extensions');
-        $max_size_mb = $this->getOption('max_size_mb') ?: 10;
+        $exts = (string)$this->getOption('extensions');
+        $max_size_mb = (float)($this->getOption('max_size_mb') ?: 10);
         
         $accept = '';
         if ($exts) {
-            $accept = '.' . str_replace(',', ',.', str_replace(' ', '', $exts));
+            $accept = '.' . str_replace(',', ',.', str_replace(' ', '', htmlspecialchars($exts, ENT_QUOTES, 'UTF-8')));
         }
 
         ob_start();
-        ?>
-        <style>
-            .btn-danger { color: #fff; background: #e66767; border-color: #e66767; transition: all 0.2s; }
-            .btn-danger:hover { background: #e14646; border-color: #df3b3b; }
-            .multifile-field-wrap .custom-del-btn { padding: 10px; border-radius: 4px; border: 1px solid transparent; cursor: pointer; display: flex; align-items: center; justify-content: center; flex-shrink: 0; }
-            .multifile-list-edit li { transition: transform 0.1s, box-shadow 0.1s; }
-            .multifile-list-edit li.drag-over { border-color: #3b82f6 !important; }
-            .multifile-info-text { margin-top: 10px; font-size: 13px; color: #64748b; line-height: 1.5; }
-            .multifile-info-text strong { color: #475569; font-weight: 500; }
-            @media (max-width: 600px) {
-                .multifile-field-wrap li { flex-wrap: wrap; }
-                .multifile-field-wrap li input[type="text"] { width: 100% !important; order: 3; margin-top: 10px; flex: none !important; }
-                .multifile-field-wrap li .custom-del-btn { margin-left: auto; order: 2; padding: 12px; }
-                .multifile-field-wrap li span { order: 1; }
-            }
-        </style>
+        try {
+            ?>
+            <style>
+                .btn-danger { color: #fff; background: #e66767; border-color: #e66767; transition: all 0.2s; }
+                .btn-danger:hover { background: #e14646; border-color: #df3b3b; }
+                .multifile-field-wrap .custom-del-btn { padding: 10px; border-radius: 4px; border: 1px solid transparent; cursor: pointer; display: flex; align-items: center; justify-content: center; flex-shrink: 0; }
+                .multifile-list-edit li { transition: transform 0.1s, box-shadow 0.1s; }
+                .multifile-list-edit li.drag-over { border-color: #3b82f6 !important; }
+                .multifile-info-text { margin-top: 10px; font-size: 13px; color: #64748b; line-height: 1.5; }
+                .multifile-info-text strong { color: #475569; font-weight: 500; }
+                .multifile-drag-handle { color:#94a3b8; font-size:24px; cursor:grab; padding: 0 10px; }
+                .multifile-ext-badge { background:#f1f5f9; padding:4px 8px; border-radius:4px; font-size:12px; font-weight:bold; color:#475569; text-transform:uppercase; }
+                .multifile-name-input { flex-grow:1; padding:8px 10px; border: 1px solid #cbd5e1; border-radius: 4px; font-size: 14px; }
+                @media (max-width: 600px) {
+                    .multifile-field-wrap li { flex-wrap: wrap; }
+                    .multifile-field-wrap li input[type="text"] { width: 100% !important; order: 3; margin-top: 10px; flex: none !important; }
+                    .multifile-field-wrap li .custom-del-btn { margin-left: auto; order: 2; padding: 12px; }
+                    .multifile-field-wrap li .multifile-ext-badge { order: 1; }
+                }
+            </style>
 
-        <div class="multifile-field-wrap" id="wrap_<?php echo $uid; ?>" style="border: 2px dashed #cbd5e1; padding: 20px; border-radius: 8px; background: #f8fafc;">
-            <input type="hidden" name="<?php echo $name; ?>[present]" value="1">
+            <div class="multifile-field-wrap" id="wrap_<?php echo $uid; ?>" style="border: 2px dashed #cbd5e1; padding: 20px; border-radius: 8px; background: #f8fafc;">
+                <input type="hidden" name="<?php echo $name_esc; ?>[present]" value="1">
 
-            <div class="upload-zone" style="margin-bottom: 15px;">
-                <div id="inputs_<?php echo $uid; ?>">
-                    <input type="file" id="trigger_<?php echo $uid; ?>" name="<?php echo $name; ?>_upload[]" multiple accept="<?php echo $accept; ?>" style="display:none;" onchange="handleFiles_<?php echo $uid; ?>(this)">
+                <div class="upload-zone" style="margin-bottom: 15px;">
+                    <div id="inputs_<?php echo $uid; ?>">
+                        <input type="file" id="trigger_<?php echo $uid; ?>" name="<?php echo $name_esc; ?>_upload[]" multiple accept="<?php echo $accept; ?>" style="display:none;">
+                    </div>
+                    <button type="button" class="btn btn-primary" style="padding: 10px 20px; cursor: pointer; max-width: 100%; font-size: 15px;" onclick="document.getElementById('trigger_<?php echo $uid; ?>').click();">
+                        Выбрать файлы
+                    </button>
+                    
+                    <div class="multifile-info-text">
+                        <?php if ($exts): ?>
+                            <div><strong>Поддерживаемые форматы:</strong> <?php echo htmlspecialchars(str_replace(',', ', ', $exts), ENT_QUOTES, 'UTF-8'); ?></div>
+                        <?php endif; ?>
+                        <div><strong>Максимальный размер файлов:</strong> <?php echo $max_size_mb; ?> Мб</div>
+                    </div>
                 </div>
-                <button type="button" class="btn btn-primary" style="padding: 10px 20px; cursor: pointer; max-width: 100%; font-size: 15px;" onclick="document.getElementById('trigger_<?php echo $uid; ?>').click();">
-                    Выбрать файлы
-                </button>
-                
-                <div class="multifile-info-text">
-                    <?php if ($exts): ?>
-                        <div><strong>Поддерживаемые форматы:</strong> <?php echo htmlspecialchars(str_replace(',', ', ', $exts)); ?></div>
-                    <?php endif; ?>
-                    <div><strong>Максимальный размер файлов:</strong> <?php echo $max_size_mb; ?> Мб</div>
-                </div>
+
+                <ul id="list_<?php echo $uid; ?>" class="multifile-list-edit" style="list-style: none; padding: 0; margin: 0;">
+                    <?php
+                    $counter = 0;
+                    foreach ($files as $f):
+                        if (!is_array($f)) continue;
+                        $fid = htmlspecialchars((string)($f['id'] ?? ''), ENT_QUOTES, 'UTF-8');
+                        $cname = htmlspecialchars((string)($f['custom_name'] ?? $f['name'] ?? ''), ENT_QUOTES, 'UTF-8');
+                        $oname = htmlspecialchars((string)($f['name'] ?? ''), ENT_QUOTES, 'UTF-8');
+                        $ext = htmlspecialchars(strtolower(pathinfo((string)($f['path'] ?? $f['name'] ?? ''), PATHINFO_EXTENSION)), ENT_QUOTES, 'UTF-8');
+                    ?>
+                        <li draggable="true" style="padding:12px; border:1px solid #e2e8f0; margin-bottom:8px; display:flex; align-items:center; gap:10px; background:#fff; border-radius: 6px;">
+                            <span class="multifile-drag-handle" title="Потяните для сортировки">☰</span>
+                            <span class="multifile-ext-badge"><?php echo $ext; ?></span>
+                            
+                            <input type="hidden" name="<?php echo $name_esc; ?>_meta[<?php echo $counter; ?>][id]" value="<?php echo $fid; ?>">
+                            <input type="hidden" name="<?php echo $name_esc; ?>_meta[<?php echo $counter; ?>][original]" value="<?php echo $oname; ?>">
+                            <input type="text" name="<?php echo $name_esc; ?>_meta[<?php echo $counter; ?>][name]" value="<?php echo $cname; ?>" class="multifile-name-input" placeholder="Название файла" maxlength="255">
+                            
+                            <button type="button" class="btn-danger custom-del-btn exist-del-btn" title="Удалить">
+                                <svg class="icms-svg-icon" fill="currentColor" style="width:16px; height:16px; display:block;"><use href="/templates/modern/images/icons/solid.svg#times-circle"></use></svg>
+                            </button>
+                        </li>
+                    <?php 
+                        $counter++;
+                    endforeach; 
+                    ?>
+                </ul>
+
+                <div id="deleted_<?php echo $uid; ?>" style="display:none;"></div>
             </div>
 
-            <ul id="list_<?php echo $uid; ?>" class="multifile-list-edit" style="list-style: none; padding: 0; margin: 0;">
-                <?php
-                $counter = 0;
-                foreach ($files as $f) {
-                    $cname = htmlspecialchars($f['custom_name'] ?? $f['name'], ENT_QUOTES);
-                    $oname = htmlspecialchars($f['name'], ENT_QUOTES);
-                    $ext = strtolower(pathinfo($f['path'] ?? $f['name'], PATHINFO_EXTENSION));
+            <script>
+                (function() {
+                    const fieldName = <?php echo json_encode($this->name, JSON_THROW_ON_ERROR); ?>;
+                    const uidStr = <?php echo json_encode($uid, JSON_THROW_ON_ERROR); ?>;
+                    const acceptAttr = <?php echo json_encode($accept, JSON_THROW_ON_ERROR); ?>;
+                    let fileCounter = <?php echo $counter; ?>;
                     
-                    echo "<li draggable='true' style='padding:12px; border:1px solid #e2e8f0; margin-bottom:8px; display:flex; align-items:center; gap:10px; background:#fff; border-radius: 6px;'>";
-                    echo "<span class='drag-handle' style='color:#94a3b8; font-size:24px; cursor:grab; padding: 0 10px;' title='Потяните для сортировки'>☰</span>";
-                    echo "<span style='background:#f1f5f9; padding:4px 8px; border-radius:4px; font-size:12px; font-weight:bold; color:#475569; text-transform:uppercase;'>{$ext}</span>";
-                    
-                    echo "<input type='hidden' name='{$name}_meta[{$counter}][id]' value='{$f['id']}'>";
-                    echo "<input type='hidden' name='{$name}_meta[{$counter}][original]' value='{$oname}'>";
-                    echo "<input type='text' name='{$name}_meta[{$counter}][name]' value='{$cname}' style='flex-grow:1; padding:8px 10px; border: 1px solid #cbd5e1; border-radius: 4px; font-size: 14px;' placeholder='Название файла'>";
-                    echo "<button type='button' onclick='this.parentElement.remove()' class='btn-danger custom-del-btn' title='Удалить'>{$svg_trash}</button>";
-                    
-                    echo "</li>";
-                    $counter++;
-                }
-                ?>
-            </ul>
+                    const wrap = document.getElementById("wrap_" + uidStr);
+                    const list = document.getElementById("list_" + uidStr);
+                    const inputsContainer = document.getElementById("inputs_" + uidStr);
+                    const deletedContainer = document.getElementById("deleted_" + uidStr);
+                    let initialTrigger = document.getElementById("trigger_" + uidStr);
 
-            <div id="deleted_<?php echo $uid; ?>" style="display:none;"></div>
-        </div>
+                    setTimeout(function(){
+                        if (wrap && wrap.closest("form")) {
+                            const form = wrap.closest("form");
+                            form.setAttribute("enctype", "multipart/form-data");
+                            form.classList.remove('ajax-form');
+                        }
+                    }, 100);
 
-        <script>
-            setTimeout(function(){
-                var wrap = document.getElementById("wrap_<?php echo $uid; ?>");
-                if (wrap && wrap.closest("form")) {
-                    var form = wrap.closest("form");
-                    form.setAttribute("enctype", "multipart/form-data");
-                    form.classList.remove('ajax-form');
-                }
-            }, 500);
+                    list.addEventListener('click', function(e) {
+                        const btn = e.target.closest('.exist-del-btn');
+                        if (btn) {
+                            btn.closest('li').remove();
+                        }
+                    });
 
-            var counter_<?php echo $uid; ?> = <?php echo $counter; ?>;
-            var svgIcon = `<?php echo $svg_trash; ?>`;
-            var list_<?php echo $uid; ?> = document.getElementById('list_<?php echo $uid; ?>');
-            
-            function handleFiles_<?php echo $uid; ?>(input) {
-                if (!input.files || input.files.length === 0) return;
-                
-                for (var i = 0; i < input.files.length; i++) {
-                    var file = input.files[i];
-                    var li = document.createElement('li');
-                    li.draggable = true;
-                    li.style.cssText = 'padding:12px; border:1px solid #e2e8f0; margin-bottom:8px; display:flex; align-items:center; gap:10px; background:#fff; border-radius: 6px;';
-                    
-                    var extMatch = file.name.match(/\.([^.]+)$/);
-                    var ext = extMatch ? extMatch[1].toUpperCase() : 'FILE';
-                    
-                    li.innerHTML = `
-                        <span class='drag-handle' style='color:#94a3b8; font-size:24px; cursor:grab; padding: 0 10px;' title='Потяните для сортировки'>☰</span>
-                        <span style='background:#f1f5f9; padding:4px 8px; border-radius:4px; font-size:12px; font-weight:bold; color:#475569;'>${ext}</span>
-                        <input type="hidden" name="<?php echo $name; ?>_meta[${counter_<?php echo $uid; ?>}][id]" value="">
-                        <input type="hidden" name="<?php echo $name; ?>_meta[${counter_<?php echo $uid; ?>}][original]" value="${file.name}">
-                        <input type="text" name="<?php echo $name; ?>_meta[${counter_<?php echo $uid; ?>}][name]" value="${file.name.replace(/\.[^/.]+$/, "")}" style="flex-grow:1; padding:8px 10px; border: 1px solid #cbd5e1; border-radius: 4px; font-size: 14px;" placeholder="Название файла">
-                        <button type="button" onclick="removeNewFile_<?php echo $uid; ?>(this, '${file.name}')" class="btn-danger custom-del-btn" title="Удалить">${svgIcon}</button>
-                    `;
-                    list_<?php echo $uid; ?>.appendChild(li);
-                    counter_<?php echo $uid; ?>++;
-                }
-                
-                input.id = '';
-                input.style.display = 'none';
-                
-                var newInp = document.createElement('input');
-                newInp.type = 'file';
-                newInp.name = '<?php echo $name; ?>_upload[]';
-                newInp.multiple = true;
-                newInp.accept = '<?php echo $accept; ?>';
-                newInp.id = 'trigger_<?php echo $uid; ?>';
-                newInp.style.display = 'none';
-                newInp.onchange = function() { handleFiles_<?php echo $uid; ?>(this); };
-                document.getElementById('inputs_<?php echo $uid; ?>').appendChild(newInp);
-            }
+                    function handleFiles(input) {
+                        if (!input.files || input.files.length === 0) return;
+                        
+                        for (let i = 0; i < input.files.length; i++) {
+                            const file = input.files[i];
+                            const li = document.createElement('li');
+                            li.draggable = true;
+                            li.style.cssText = 'padding:12px; border:1px solid #e2e8f0; margin-bottom:8px; display:flex; align-items:center; gap:10px; background:#fff; border-radius: 6px;';
+                            
+                            const extMatch = file.name.match(/\.([^.]+)$/);
+                            const ext = extMatch ? extMatch[1].toUpperCase() : 'FILE';
+                            
+                            const dragHandle = document.createElement('span');
+                            dragHandle.className = 'multifile-drag-handle';
+                            dragHandle.title = 'Потяните для сортировки';
+                            dragHandle.textContent = '☰';
+                            li.appendChild(dragHandle);
 
-            function removeNewFile_<?php echo $uid; ?>(btn, fileName) {
-                btn.parentElement.remove();
-                var deletedContainer = document.getElementById('deleted_<?php echo $uid; ?>');
-                var hiddenDel = document.createElement('input');
-                hiddenDel.type = 'hidden';
-                hiddenDel.name = '<?php echo $name; ?>_deleted[]';
-                hiddenDel.value = fileName;
-                deletedContainer.appendChild(hiddenDel);
-            }
+                            const extBadge = document.createElement('span');
+                            extBadge.className = 'multifile-ext-badge';
+                            extBadge.textContent = ext;
+                            li.appendChild(extBadge);
 
-            var dragEl_<?php echo $uid; ?> = null;
+                            const hiddenId = document.createElement('input');
+                            hiddenId.type = 'hidden';
+                            hiddenId.name = fieldName + '_meta[' + fileCounter + '][id]';
+                            hiddenId.value = '';
+                            li.appendChild(hiddenId);
 
-            list_<?php echo $uid; ?>.addEventListener('dragstart', function(e) {
-                dragEl_<?php echo $uid; ?> = e.target.closest('li');
-                if (!dragEl_<?php echo $uid; ?>) return;
-                e.dataTransfer.effectAllowed = 'move';
-                e.dataTransfer.setData('text/plain', ''); // Фикс для Firefox
-                setTimeout(function() { 
-                    dragEl_<?php echo $uid; ?>.style.opacity = '0.4'; 
-                    dragEl_<?php echo $uid; ?>.style.background = '#f8fafc'; 
-                }, 0);
-            });
+                            const hiddenOrig = document.createElement('input');
+                            hiddenOrig.type = 'hidden';
+                            hiddenOrig.name = fieldName + '_meta[' + fileCounter + '][original]';
+                            hiddenOrig.value = file.name; 
+                            li.appendChild(hiddenOrig);
 
-            list_<?php echo $uid; ?>.addEventListener('dragover', function(e) {
-                e.preventDefault();
-                e.dataTransfer.dropEffect = 'move';
-                
-                var target = e.target.closest('li');
-                if (target && target !== dragEl_<?php echo $uid; ?>) {
-                    var rect = target.getBoundingClientRect();
-                    var next = (e.clientY - rect.top) / (rect.bottom - rect.top) > 0.5;
-                    list_<?php echo $uid; ?>.insertBefore(dragEl_<?php echo $uid; ?>, next && target.nextSibling || target);
-                }
-            });
+                            const nameInput = document.createElement('input');
+                            nameInput.type = 'text';
+                            nameInput.name = fieldName + '_meta[' + fileCounter + '][name]';
+                            nameInput.value = file.name.replace(/\.[^/.]+$/, "");
+                            nameInput.className = 'multifile-name-input';
+                            nameInput.placeholder = 'Название файла';
+                            nameInput.maxLength = 255;
+                            li.appendChild(nameInput);
 
-            list_<?php echo $uid; ?>.addEventListener('dragend', function(e) {
-                if (dragEl_<?php echo $uid; ?>) {
-                    dragEl_<?php echo $uid; ?>.style.opacity = '1';
-                    dragEl_<?php echo $uid; ?>.style.background = '#fff';
-                    dragEl_<?php echo $uid; ?> = null;
-                }
-            });
-        </script>
-        <?php
-        return ob_get_clean();
+                            const delBtn = document.createElement('button');
+                            delBtn.type = 'button';
+                            delBtn.className = 'btn-danger custom-del-btn';
+                            delBtn.title = 'Удалить';
+                            
+                            const svgNS = "http://www.w3.org/2000/svg";
+                            const svg = document.createElementNS(svgNS, "svg");
+                            svg.setAttribute("class", "icms-svg-icon");
+                            svg.setAttribute("fill", "currentColor");
+                            svg.setAttribute("style", "width:16px; height:16px; display:block;");
+                            
+                            const use = document.createElementNS(svgNS, "use");
+                            use.setAttribute("href", "/templates/modern/images/icons/solid.svg#times-circle");
+                            
+                            svg.appendChild(use);
+                            delBtn.appendChild(svg);
+                            
+                            delBtn.addEventListener('click', function() {
+                                li.remove();
+                                const hiddenDel = document.createElement('input');
+                                hiddenDel.type = 'hidden';
+                                hiddenDel.name = fieldName + '_deleted[]';
+                                hiddenDel.value = file.name;
+                                deletedContainer.appendChild(hiddenDel);
+                            });
+                            li.appendChild(delBtn);
+
+                            list.appendChild(li);
+                            fileCounter++;
+                        }
+                        
+                        input.id = '';
+                        input.style.display = 'none';
+                        
+                        const newInp = document.createElement('input');
+                        newInp.type = 'file';
+                        newInp.name = fieldName + '_upload[]';
+                        newInp.multiple = true;
+                        newInp.accept = acceptAttr;
+                        newInp.id = 'trigger_' + uidStr;
+                        newInp.style.display = 'none';
+                        newInp.addEventListener('change', function() { handleFiles(this); });
+                        inputsContainer.appendChild(newInp);
+                    }
+
+                    if (initialTrigger) {
+                        initialTrigger.addEventListener('change', function() { handleFiles(this); });
+                    }
+
+                    let dragEl = null;
+
+                    list.addEventListener('dragstart', function(e) {
+                        dragEl = e.target.closest('li');
+                        if (!dragEl) return;
+                        e.dataTransfer.effectAllowed = 'move';
+                        e.dataTransfer.setData('text/plain', ''); 
+                        setTimeout(function() { 
+                            dragEl.style.opacity = '0.4'; 
+                            dragEl.style.background = '#f8fafc'; 
+                        }, 0);
+                    });
+
+                    list.addEventListener('dragover', function(e) {
+                        e.preventDefault();
+                        e.dataTransfer.dropEffect = 'move';
+                        
+                        const target = e.target.closest('li');
+                        if (target && target !== dragEl) {
+                            const rect = target.getBoundingClientRect();
+                            const next = (e.clientY - rect.top) / (rect.bottom - rect.top) > 0.5;
+                            list.insertBefore(dragEl, next && target.nextSibling || target);
+                        }
+                    });
+
+                    list.addEventListener('dragend', function(e) {
+                        if (dragEl) {
+                            dragEl.style.opacity = '1';
+                            dragEl.style.background = '#fff';
+                            dragEl = null;
+                        }
+                    });
+                })();
+            </script>
+            <?php
+            return ob_get_clean();
+        } catch (\Throwable $e) {
+            ob_end_clean();
+            error_log('fieldMultifile::getInput render error: ' . $e->getMessage());
+            return '';
+        }
     }
 
-    private function getFlatFiles($input_name) {
+    private function getFlatFiles($input_name): array {
         $files = [];
         if (!isset($_FILES[$input_name]) || !is_array($_FILES[$input_name]['name'])) return $files;
         $f = $_FILES[$input_name];
         
-        $flatten = function($array) use (&$flatten) {
+        $flatten = function($array, int $depth = 0) use (&$flatten) {
             $result = [];
+            if ($depth > 5) return $result; 
+            
             if (!is_array($array)) return [$array];
             foreach ($array as $val) {
-                if (is_array($val)) $result = array_merge($result, $flatten($val)); else $result[] = $val;
+                if (is_array($val)) {
+                    $result = array_merge($result, $flatten($val, $depth + 1)); 
+                } else {
+                    $result[] = $val;
+                }
             }
             return $result;
         };
 
-        $names = $flatten($f['name']); $types = $flatten($f['type']);
-        $tmp_names = $flatten($f['tmp_name']); $errors = $flatten($f['error']); $sizes = $flatten($f['size']);
+        $names = $flatten($f['name']); 
+        $types = $flatten($f['type']);
+        $tmp_names = $flatten($f['tmp_name']); 
+        $errors = $flatten($f['error']); 
+        $sizes = $flatten($f['size']);
 
-        for ($i = 0; $i < count($names); $i++) {
+        $cnt = min(count($names), count($types), count($tmp_names), count($errors), count($sizes));
+
+        for ($i = 0; $i < $cnt; $i++) {
             if ($errors[$i] === UPLOAD_ERR_OK) {
-                $files[$names[$i]][] = [
-                    'name' => $names[$i], 'type' => $types[$i], 'tmp_name' => $tmp_names[$i],
-                    'error' => $errors[$i], 'size' => $sizes[$i],
+                $uniq_key = $i . '_' . md5((string)$names[$i]);
+                $files[$uniq_key] = [
+                    'name'     => (string)$names[$i], 
+                    'type'     => (string)$types[$i], 
+                    'tmp_name' => (string)$tmp_names[$i],
+                    'error'    => (int)$errors[$i], 
+                    'size'     => (int)$sizes[$i],
+                    'original' => (string)$names[$i]
                 ];
             }
         }
         return $files;
     }
 
-    private function processCustomUpload($upload_data, $allowed_exts, $max_size_bytes) {
-        $ext = pathinfo($upload_data['name'], PATHINFO_EXTENSION);
+    private function processCustomUpload(array $upload_data, string $allowed_exts, int $max_size_bytes): array {
+        $ext = strtolower(pathinfo((string)$upload_data['name'], PATHINFO_EXTENSION));
+        
+        $blacklist = ['php', 'php3', 'php4', 'php5', 'php7', 'php8', 'phtml', 'phar', 'exe', 'sh', 'cgi', 'pl', 'py', 'svg', 'html', 'htm', 'js'];
+        if (in_array($ext, $blacklist, true)) {
+            return ['success' => false, 'error' => 'Загрузка исполняемых или активных файлов запрещена политикой безопасности'];
+        }
+
+        if (function_exists('finfo_open')) {
+            $finfo = finfo_open(FILEINFO_MIME_TYPE);
+            if ($finfo !== false) {
+                $mime = finfo_file($finfo, $upload_data['tmp_name']);
+                finfo_close($finfo);
+                
+                $allowed_mimes = [
+                    'pdf'  => ['application/pdf'],
+                    'jpg'  => ['image/jpeg'],
+                    'jpeg' => ['image/jpeg'],
+                    'png'  => ['image/png', 'image/x-png'],
+                    'gif'  => ['image/gif'],
+                    'webp' => ['image/webp'],
+                    'zip'  => ['application/zip', 'application/x-zip-compressed'],
+                    'rar'  => ['application/x-rar-compressed', 'application/vnd.rar'],
+                    '7z'   => ['application/x-7z-compressed'],
+                    'tar'  => ['application/x-tar'],
+                    'gz'   => ['application/gzip', 'application/x-gzip'],
+                    'doc'  => ['application/msword'],
+                    'docx' => ['application/vnd.openxmlformats-officedocument.wordprocessingml.document'],
+                    'xls'  => ['application/vnd.ms-excel'],
+                    'xlsx' => ['application/vnd.openxmlformats-officedocument.spreadsheetml.sheet'],
+                    'csv'  => ['text/csv', 'text/plain'],
+                    'txt'  => ['text/plain'],
+                    'md'   => ['text/plain', 'text/markdown'],
+                    'mp3'  => ['audio/mpeg'],
+                    'wav'  => ['audio/wav', 'audio/x-wav'],
+                    'ogg'  => ['audio/ogg', 'video/ogg', 'application/ogg'],
+                    'mp4'  => ['video/mp4'],
+                    'avi'  => ['video/x-msvideo'],
+                    'mkv'  => ['video/x-matroska'],
+                    'webm' => ['video/webm']
+                ];
+
+                if (isset($allowed_mimes[$ext]) && !in_array($mime, $allowed_mimes[$ext], true)) {
+                    error_log('fieldMultifile: Ошибка загрузки (Polyglot/MIME mismatch). Заявлен: ' . $ext . ', Реальный MIME: ' . $mime);
+                    return ['success' => false, 'error' => 'MIME-тип не соответствует расширению'];
+                }
+            }
+        }
+
         if ($allowed_exts) {
             $allowed_arr = array_map('trim', explode(',', strtolower($allowed_exts)));
-            if (!in_array(strtolower($ext), $allowed_arr)) return ['success' => false, 'error' => 'Недопустимое расширение файла'];
+            if (!in_array($ext, $allowed_arr, true)) {
+                return ['success' => false, 'error' => 'Недопустимое расширение файла'];
+            }
         }
-        if ($max_size_bytes && $upload_data['size'] > $max_size_bytes) return ['success' => false, 'error' => 'Файл слишком большой'];
-        if (!is_uploaded_file($upload_data['tmp_name'])) return ['success' => false, 'error' => 'Ошибка HTTP POST'];
 
-        $upload_path = cmsConfig::getInstance()->upload_path; 
-        $sub_dir = 'files/' . date('Y-m') . '/'; $full_dir = $upload_path . $sub_dir;
+        if ($max_size_bytes > 0 && $upload_data['size'] > $max_size_bytes) {
+            return ['success' => false, 'error' => 'Файл слишком большой'];
+        }
+        if (!is_uploaded_file($upload_data['tmp_name'])) {
+            return ['success' => false, 'error' => 'Ошибка HTTP POST'];
+        }
+
+        $config = cmsConfig::getInstance();
+        $upload_path = $config->upload_path; 
+        $sub_dir = 'files/' . date('Y-m') . '/'; 
+        $full_dir = rtrim($upload_path, '/\\') . '/' . ltrim($sub_dir, '/\\');
         
-        if (!is_dir($full_dir)) @mkdir($full_dir, 0777, true);
+        if (!is_dir($full_dir) && !mkdir($full_dir, 0755, true) && !is_dir($full_dir)) {
+            return ['success' => false, 'error' => 'Ошибка создания директории на сервере'];
+        }
 
-        $filename = md5(time() . uniqid() . $upload_data['name']) . '.' . strtolower($ext);
+        $filename = bin2hex(random_bytes(16)) . '.' . $ext;
         $destination = $full_dir . $filename;
 
         if (move_uploaded_file($upload_data['tmp_name'], $destination)) {
-            return ['success' => true, 'url' => $sub_dir . $filename, 'name' => preg_replace('/[^\w\.\-]/u', '_', $upload_data['name']), 'size' => $upload_data['size']];
-        } else {
-            return ['success' => false, 'error' => 'Нет прав на запись в папку upload'];
+            $clean_name = preg_replace('/[^\w\.\-\p{L}\p{N}\s]/u', '_', $upload_data['name']);
+            return [
+                'success' => true, 
+                'url'     => $sub_dir . $filename, 
+                'name'    => $clean_name, 
+                'size'    => (int)$upload_data['size']
+            ];
         }
+
+        return ['success' => false, 'error' => 'Нет прав на запись в папку upload'];
     }
 
     public function store($value, $is_submitted, $old_value = null) {
-        if (empty($_POST) && empty($_FILES) && isset($_SERVER['CONTENT_LENGTH']) && $_SERVER['CONTENT_LENGTH'] > 0) {
-            cmsUser::addSessionMessage('Сбой загрузки: превышен лимит "post_max_size" на сервере!', 'error'); return $old_value;
+        $content_length = (int)($_SERVER['CONTENT_LENGTH'] ?? 0);
+        if (empty($_POST) && empty($_FILES) && $content_length > 0) {
+            cmsUser::addSessionMessage('Сбой загрузки: превышен лимит "post_max_size" на сервере!', 'error'); 
+            return $old_value;
         }
 
-        $core = cmsCore::getInstance(); $files_model = cmsCore::getModel('files');
+        $core = cmsCore::getInstance(); 
+        $files_model = cmsCore::getModel('files');
         
         $saved_files = [];
-        $old_files = $old_value ? (is_array($old_value) ? $old_value : cmsModel::yamlToArray($old_value)) : [];
-        if (!is_array($old_files)) $old_files = [];
+        $old_files = $this->getSafeYamlData($old_value);
 
-        $meta = $core->request->get($this->name . '_meta', []); $deleted = $core->request->get($this->name . '_deleted', []);
-        if (!is_array($meta)) $meta = []; if (!is_array($deleted)) $deleted = [];
+        $meta = $core->request->get($this->name . '_meta', []); 
+        $deleted = $core->request->get($this->name . '_deleted', []);
+        
+        if (!is_array($meta)) $meta = []; 
+        if (!is_array($deleted)) $deleted = [];
+
+        if (count($meta) > 500) $meta = array_slice($meta, 0, 500);
 
         $new_uploads = $this->getFlatFiles($this->name . '_upload');
-        $allowed_exts = $this->getOption('extensions');
-        $max_size_mb  = ($this->getOption('max_size_mb') ?: 10); $max_size_bytes = $max_size_mb * 1048576;
+        
+        if (count($new_uploads) > 50) {
+            cmsUser::addSessionMessage('Слишком много файлов загружается за один раз (максимум 50)', 'error');
+            $new_uploads = array_slice($new_uploads, 0, 50, true);
+        }
+
+        $allowed_exts = (string)$this->getOption('extensions');
+        $max_size_mb  = (float)($this->getOption('max_size_mb') ?: 10); 
+        $max_size_bytes = (int)($max_size_mb * 1048576);
 
         foreach ($meta as $item) {
+            if (!is_array($item)) continue;
+
             if (!empty($item['id'])) {
                 foreach ($old_files as $k => $of) {
-                    if ($of['id'] == $item['id']) {
-                        $of['custom_name'] = $item['name']; $saved_files[] = $of; unset($old_files[$k]); break;
+                    if (isset($of['id']) && (int)$of['id'] === (int)$item['id']) {
+                        $of['custom_name'] = mb_substr((string)($item['name'] ?? ''), 0, 255); 
+                        $saved_files[] = $of; 
+                        unset($old_files[$k]); 
+                        break;
                     }
                 }
-            } else if (!empty($item['original'])) {
-                $orig = $item['original'];
-                $del_index = array_search($orig, $deleted);
-                if ($del_index !== false) { unset($deleted[$del_index]); continue; }
+            } elseif (!empty($item['original'])) {
+                $orig = (string)$item['original'];
                 
-                if (!empty($new_uploads[$orig])) {
-                    $upload_data = array_shift($new_uploads[$orig]);
+                $del_index = array_search($orig, $deleted, true);
+                if ($del_index !== false) { 
+                    unset($deleted[$del_index]); 
+                    continue; 
+                }
+                
+                $upload_key = null;
+                foreach ($new_uploads as $key => $up) {
+                    if ($up['original'] === $orig) {
+                        $upload_key = $key;
+                        break;
+                    }
+                }
+
+                if ($upload_key !== null) {
+                    $upload_data = $new_uploads[$upload_key];
+                    unset($new_uploads[$upload_key]); 
+
                     $result = $this->processCustomUpload($upload_data, $allowed_exts, $max_size_bytes);
 
                     if ($result['success']) {
-                        $context = $core->getUriData(); $upload_params = [];
+                        $context = $core->getUriData(); 
+                        $upload_params = [];
+                        
                         if (isset($context['controller'])) $upload_params['target_controller'] = $context['controller'];
                         if (isset($context['action'])) $upload_params['target_subject'] = $context['action'];
-                        if (strpos($core->uri, '/add/') === false && !empty($context['params'][0]) && is_numeric($context['params'][0])) {
-                            $upload_params['target_id'] = $context['params'][0];
+                        
+                        if (!str_contains($core->uri, '/add/') && !empty($context['params'][0]) && is_numeric($context['params'][0])) {
+                            $upload_params['target_id'] = (int)$context['params'][0];
                         }
+                        
                         $file_id = $files_model->registerFile(array_merge($upload_params, [
-                            'path' => $result['url'], 'name' => $result['name'], 'user_id' => cmsUser::get('id')
+                            'path'    => $result['url'], 
+                            'name'    => $result['name'], 
+                            'user_id' => cmsUser::get('id')
                         ]));
-                        $saved_files[] = ['id' => $file_id, 'name' => $result['name'], 'custom_name' => !empty($item['name']) ? $item['name'] : $result['name'], 'size' => $result['size'], 'path' => $result['url']];
+                        
+                        $custom_name = !empty($item['name']) ? mb_substr((string)$item['name'], 0, 255) : $result['name'];
+                        
+                        $saved_files[] = [
+                            'id'          => $file_id, 
+                            'name'        => $result['name'], 
+                            'custom_name' => $custom_name, 
+                            'size'        => $result['size'], 
+                            'path'        => $result['url']
+                        ];
                     } else {
-                        cmsUser::addSessionMessage('Ошибка загрузки файла "'.$orig.'": '.$result['error'], 'error');
+                        $safe_orig = htmlspecialchars($orig, ENT_QUOTES, 'UTF-8');
+                        cmsUser::addSessionMessage('Ошибка загрузки файла "'.$safe_orig.'": '.$result['error'], 'error');
                     }
                 }
             }
         }
-        foreach ($old_files as $of) { if (!empty($of['id'])) $files_model->deleteFile($of['id']); }
+        
+        foreach ($old_files as $of) { 
+            if (!empty($of['id'])) {
+                $files_model->deleteFile($of['id']); 
+            }
+        }
+        
         return empty($saved_files) ? null : $saved_files;
     }
 
     public function delete($value) {
         if (empty($value)) return true;
-        $files = is_array($value) ? $value : cmsModel::yamlToArray($value);
-        if (!is_array($files)) return true;
+        $files = $this->getSafeYamlData($value);
+        if (empty($files)) return true;
+        
         $files_model = cmsCore::getModel('files');
-        foreach ($files as $f) { if (!empty($f['id'])) $files_model->deleteFile($f['id']); }
+        foreach ($files as $f) { 
+            if (!empty($f['id'])) {
+                $files_model->deleteFile($f['id']); 
+            }
+        }
         return true;
     }
 
     public function getFiles($value) {
         if (empty($value)) return false;
-        $files = is_array($value) ? $value : cmsModel::yamlToArray($value);
+        $files = $this->getSafeYamlData($value);
         $paths = [];
-        if (is_array($files)) { foreach($files as $f) { if(!empty($f['path'])) $paths[] = $f['path']; } }
-        return $paths;
+        
+        $config = cmsConfig::getInstance();
+        $upload_path = realpath($config->upload_path);
+
+        if ($upload_path === false) {
+            return false;
+        }
+
+        foreach($files as $f) { 
+            if(!empty($f['path'])) {
+                $file_real_path = realpath($upload_path . DIRECTORY_SEPARATOR . ltrim((string)$f['path'], '/\\'));
+                if ($file_real_path !== false && str_starts_with($file_real_path, $upload_path)) {
+                    $paths[] = str_replace(['../', '..\\', "\0"], '', ltrim((string)$f['path'], '/\\'));
+                }
+            } 
+        } 
+        return empty($paths) ? false : $paths;
     }
 }
