@@ -4,6 +4,17 @@
  * Template Type: content
  */
 
+// =========================================================================
+// НАСТРОЙКИ ПОЛЕЙ
+// Укажите здесь системные имена полей, которые используются в типе контента
+// =========================================================================
+$cfg_income   = 'income';       // Поле "Приход"
+$cfg_expenses = 'expenses';     // Поле "Расходы" (тип CRM Калькулятор)
+$cfg_recordid = 'recordid';     // Поле "Артикул / ID записи"
+$cfg_verkauf  = 'verkaufdate';  // Поле "Дата продажи (закрытия)"
+$cfg_datepub  = 'date_pub';     // Поле "Дата публикации (взятия в работу)"
+// =========================================================================
+
 if (!function_exists('crm_days_plural')) {
     function crm_days_plural($n) {
         $n = abs($n);
@@ -50,7 +61,7 @@ if( $ctype['options']['list_show_filter'] ) {
         'items' => []
     ];
 
-    $grouped_fields = ['title', 'recordid', 'tuv', 'date_pub', 'verkaufdate', 'income', 'expenses'];
+    $grouped_fields = ['title', $cfg_recordid, $cfg_datepub, $cfg_verkauf, $cfg_income, $cfg_expenses];
 ?>
 
 <div class="content_list table <?php echo $ctype['name']; ?>_list table-responsive-md mt-3 mt-md-4">
@@ -84,8 +95,8 @@ if( $ctype['options']['list_show_filter'] ) {
                 $d_today = new DateTime();
                 $d_today->setTime(0, 0, 0);
 
-                $raw_date_pub = (!empty($item['date_pub']) && strpos($item['date_pub'], '0000') === false) ? $item['date_pub'] : null;
-                $raw_verkaufdate = (!empty($item['verkaufdate']) && strpos($item['verkaufdate'], '0000') === false) ? $item['verkaufdate'] : null;
+                $raw_date_pub = (!empty($item[$cfg_datepub]) && strpos($item[$cfg_datepub], '0000') === false) ? $item[$cfg_datepub] : null;
+                $raw_verkaufdate = (!empty($item[$cfg_verkauf]) && strpos($item[$cfg_verkauf], '0000') === false) ? $item[$cfg_verkauf] : null;
 
                 $f_date_pub = $raw_date_pub ? date('d.m.Y', strtotime($raw_date_pub)) : '';
                 $f_verkaufdate = $raw_verkaufdate ? date('d.m.Y', strtotime($raw_verkaufdate)) : '';
@@ -111,39 +122,8 @@ if( $ctype['options']['list_show_filter'] ) {
                     }
                 }
 
-                $raw_tuv = (!empty($item['tuv']) && strpos($item['tuv'], '0000') === false) ? $item['tuv'] : null;
-                $f_tuv_date = $raw_tuv ? date('d.m.Y', strtotime($raw_tuv)) : '';
-                $tuv_days_str = '';
-                
-                if ($raw_tuv) {
-                    $d_tuv = new DateTime($raw_tuv);
-                    $d_tuv->setTime(0, 0, 0);
-                    
-                    $diff_tuv = $d_today->diff($d_tuv);
-                    $diff_days = (int)$diff_tuv->format('%R%a');
-                    $total_months = ($diff_tuv->y * 12) + $diff_tuv->m;
-                    
-                    if ($diff_days > 0) {
-                        if ($total_months > 0) {
-                            $tuv_days_str = '' . $total_months . ' мес.';
-                        } else {
-                            $tuv_days_str = 'Менее 1 мес.';
-                        }
-                    } elseif ($diff_days === 0) {
-                        $tuv_days_str = 'Истекает сегодня';
-                    } else {
-                        if ($total_months > 0) {
-                            $tuv_days_str = 'Просрочено на ' . $total_months . ' мес.';
-                        } else {
-                            $tuv_days_str = 'Просрочено менее 1 мес.';
-                        }
-                    }
-                } elseif (isset($item['fields']['tuv'])) {
-                    $f_tuv_date = strip_tags($item['fields']['tuv']['html']);
-                }
-
-                $f_recordid = isset($item['fields']['recordid']) ? strip_tags($item['fields']['recordid']['html']) : ($item['recordid'] ?? '');
-                $f_income = isset($item['fields']['income']) ? strip_tags($item['fields']['income']['html']) : ($item['income'] ?? '0');
+                $f_recordid = isset($item['fields'][$cfg_recordid]) ? strip_tags($item['fields'][$cfg_recordid]['html']) : ($item[$cfg_recordid] ?? '');
+                $f_income = isset($item['fields'][$cfg_income]) ? strip_tags($item['fields'][$cfg_income]['html']) : ($item[$cfg_income] ?? '0');
                 
                 $excel_item['recordid'] = $f_recordid;
             ?>
@@ -174,28 +154,14 @@ if( $ctype['options']['list_show_filter'] ) {
                         </h3>
                     <?php } ?>
 
-                    <?php if ($f_date_pub || $f_verkaufdate || $f_tuv_date) { ?>
+                    <?php if ($f_date_pub || $f_verkaufdate) { ?>
                         <div style="font-size: 0.85em; background: #f8f9fa; padding: 6px 10px; border-radius: 4px; border: 1px solid #e9ecef; display: inline-block; margin-top: 5px;">
                             
-                            <?php if ($f_date_pub || $f_verkaufdate) { ?>
-                                <span style="margin-right: 12px; white-space: nowrap;">
-                                    <?php if ($f_date_pub) { echo $f_date_pub; } ?>
-                                    <?php if ($f_date_pub && $f_verkaufdate) { echo '<span style="color: #adb5bd; margin: 0 4px;">/</span>'; } ?>
-                                    <?php if ($f_verkaufdate) { echo $f_verkaufdate; } ?>
-                                </span>
-                            <?php } ?>
-
-                            <?php if ($f_tuv_date) { ?>
-                                <span style="margin-right: 12px; white-space: nowrap;">
-                                    <span style="color: #6c757d;">TüV:</span> <?php echo $f_tuv_date; ?>
-                                    <?php if ($tuv_days_str) { 
-                                        $tuv_color = (strpos($tuv_days_str, 'Просрочено') !== false) ? '#dc3545' : '#28a745';
-                                        if ($tuv_days_str === 'Истекает сегодня') $tuv_color = '#fd7e14';
-                                    ?>
-                                        <span style="color: <?php echo $tuv_color; ?>; margin-left: 4px;">(<?php echo $tuv_days_str; ?>)</span>
-                                    <?php } ?>
-                                </span>
-                            <?php } ?>
+                            <span style="margin-right: 12px; white-space: nowrap;">
+                                <?php if ($f_date_pub) { echo $f_date_pub; } ?>
+                                <?php if ($f_date_pub && $f_verkaufdate) { echo '<span style="color: #adb5bd; margin: 0 4px;">/</span>'; } ?>
+                                <?php if ($f_verkaufdate) { echo $f_verkaufdate; } ?>
+                            </span>
                             
                             <?php if ($days_in_work_str !== '') { ?>
                                 <span style="white-space: nowrap; color: #495057;">
@@ -208,8 +174,8 @@ if( $ctype['options']['list_show_filter'] ) {
 
                 <td class="align-middle">
                     <?php
-                        $expenses_data = !empty($item['expenses']) ? json_decode($item['expenses'], true) : [];
-                        $income = isset($item['income']) ? (float)$item['income'] : 0;
+                        $expenses_data = !empty($item[$cfg_expenses]) ? json_decode($item[$cfg_expenses], true) : [];
+                        $income = isset($item[$cfg_income]) ? (float)$item[$cfg_income] : 0;
                         
                         $total_expenses = 0;
                         $users_map = [];
