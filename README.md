@@ -13,6 +13,7 @@
   * [profit.php](https://github.com/Jestik/crm-icms2/blob/main/package/system/fields/profit.php) — Окупаемость / Прибыль, считает сумму дочерних записей типа контента
   * [recordid.php](https://github.com/Jestik/crm-icms2/blob/main/package/system/fields/recordid.php) — ID записи, выводит ID записи, возможно использовать как артикул
   * [tripcost.php](https://github.com/Jestik/crm-icms2/blob/main/package/system/fields/tripcost.php) — Калькулятор поездки, считает стоимость поездки с амортизацией ТС
+  * [sticker.php](https://github.com/Jestik/crm-icms2/blob/main/package/system/fields/sticker.php) — Генератор картинки с нужными полями (Например наклеек для термопринтера)
 * **Виджеты:**
   * [crm_chart](https://github.com/Jestik/crm-icms2/tree/main/package/system/widgets/crm_chart) — выводит график сделок, есть кое какие настройки, по датам и что выводить
 * **Шаблоны вывода списка:**
