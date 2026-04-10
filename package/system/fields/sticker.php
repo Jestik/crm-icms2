@@ -1,15 +1,14 @@
 <?php
 class fieldSticker extends cmsFormField {
 
-    public $title       = 'Наклейка для принтера';
+    public $title       = 'Наклейка (Конструктор)';
     public $sql         = 'varchar(10)'; 
     public $allow_index = false;
-    public $var_type    = 'string';
 
     public function getOptions() {
-        return [
+        $options = [
             new fieldList('size', [
-                'title' => 'Формат наклейки',
+                'title' => 'Формат наклейки (203 DPI)',
                 'default' => '320x240',
                 'items' => [
                     '240x160' => '30 × 20 мм (240 × 160 px)',
@@ -18,243 +17,240 @@ class fieldSticker extends cmsFormField {
                     '400x400' => '50 × 50 мм (400 × 400 px)'
                 ]
             ]),
-            new fieldString('fields_to_print', [
-                'title' => 'Поля для текста и фото (через запятую)',
-                'hint' => 'Например: title, recordid, price, images. Скрипт сам найдет фото и выведет его сбоку.'
+            new fieldList('font_family', [
+                'title' => 'Шрифт (Sans-serif)',
+                'default' => 'Arial Black',
+                'items' => [
+                    'Arial Black' => 'Arial Black (Массивный)',
+                    'Roboto' => 'Roboto (Bold)',
+                    'Courier New' => 'Courier New (Моноширинный)',
+                    'Montserrat' => 'Montserrat (Bold)'
+                ]
             ]),
             new fieldString('qr_field', [
                 'title' => 'Поле для QR-кода',
-                'hint' => 'Например: url или id. Оставьте пустым, если не нужно.'
+                'hint' => 'Системное имя поля (например: url или article)'
+            ]),
+            new fieldNumber('qr_size', [
+                'title' => 'Размер QR-кода (px)',
+                'hint' => 'Оставьте пустым для авто-расчета размера',
+                'default' => ''
             ]),
             new fieldString('button_text', [
                 'title' => 'Текст на кнопке',
-                'default' => 'Показать наклейку'
+                'default' => 'Создать наклейку'
             ])
         ];
+
+        for ($i = 1; $i <= 6; $i++) {
+            $options[] = new fieldString("f{$i}_name", [
+                'title' => "<b style='color:#34495e;'>--- СТРОКА #{$i} ---</b><br>Системное имя поля", 
+                'hint'  => 'Например: title',
+            ]);
+            $options[] = new fieldNumber("f{$i}_size", [
+                'title' => "Размер шрифта (pt) [Поле {$i}]", 
+                'default' => ($i==1 ? 16 : 11)
+            ]);
+            $options[] = new fieldList("f{$i}_flow", [
+                'title' => "Обтекание [Поле {$i}]",
+                'default' => 'next',
+                'items' => [
+                    'next'  => 'На новую строку',
+                    'right' => 'В ту же строку (справа)'
+                ]
+            ]);
+        }
+
+        return $options;
     }
 
     public function parse($value) {
         if (empty($this->item)) { return ''; }
 
         $size = $this->getOption('size', '320x240');
-        list($width, $height) = explode('x', $size);
-        $button_text = htmlspecialchars($this->getOption('button_text', 'Показать наклейку'), ENT_QUOTES);
+        $parts = explode('x', $size);
+        $width  = (int)($parts[0] ?? 320);
+        $height = (int)($parts[1] ?? 240);
+        
+        $font_family = $this->getOption('font_family', 'Arial Black');
+        $btn_text = htmlspecialchars($this->getOption('button_text', 'Создать наклейку'), ENT_QUOTES);
 
-        $fields_str = $this->getOption('fields_to_print', '');
-        $print_data = [];
-        $print_image_url = '';
+        $layers = [];
+        for ($i = 1; $i <= 6; $i++) {
+            $fname = trim((string)$this->getOption("f{$i}_name"));
+            if (!$fname) continue;
 
-        if ($fields_str) {
-            $f_names = array_map('trim', explode(',', $fields_str));
-            foreach ($f_names as $fn) {
-                if ($fn === 'recordid' || $fn === 'id') {
-                    $print_data[$fn] = 'ID: ' . ($this->item['id'] ?? '');
-                    continue;
-                }
-
-                if (isset($this->item[$fn])) {
-                    $raw_val = $this->item[$fn];
-
-                    if (is_string($raw_val) && strpos($raw_val, '---') === 0) {
-                        $arr = cmsModel::yamlToArray($raw_val);
-                        if (is_array($arr) && !empty($arr)) {
-                            $first_photo = reset($arr);
-                            if (is_array($first_photo)) {
-                                $preset = isset($first_photo['small']) ? 'small' : key($first_photo);
-                                $print_image_url = cmsConfig::get('upload_host') . '/' . $first_photo[$preset];
-                            }
-                        }
-                    } else if (is_scalar($raw_val)) {
-                        $clean = trim(strip_tags((string)$raw_val));
-                        if ($clean) {
-                            $print_data[$fn] = $clean;
-                        }
-                    }
-                }
+            $val = '';
+            if ($fname === 'recordid') { 
+                $val = 'ID: ' . ($this->item['id'] ?? ''); 
+            } else { 
+                $val = strip_tags((string)($this->item[$fname] ?? '')); 
             }
+            
+            if (!$val) continue;
+
+            $layers[] = [
+                'text' => $val,
+                'size' => (int)$this->getOption("f{$i}_size", 12),
+                'flow' => $this->getOption("f{$i}_flow", 'next')
+            ];
         }
 
-        $qr_field = $this->getOption('qr_field', '');
-        $qr_data = '';
-        if ($qr_field) {
-            if ($qr_field == 'url') {
-                $qr_data = href_to_abs($this->item['ctype']['name'], $this->item['slug'] . '.html');
-            } else if ($qr_field == 'recordid' || $qr_field == 'id') {
-                $qr_data = $this->item['id'] ?? '';
-            } else if (isset($this->item[$qr_field])) {
-                $qr_data = strip_tags((string)$this->item[$qr_field]);
+        $qr_f = trim((string)$this->getOption('qr_field'));
+        $qr_val = '';
+        if ($qr_f) {
+            if ($qr_f === 'url') {
+                $qr_val = function_exists('href_to_abs') ? href_to_abs($this->item['ctype']['name'], $this->item['slug'].'.html') : '';
+            } else {
+                $qr_val = strip_tags((string)($this->item[$qr_f] ?? ''));
             }
         }
+        
+        $qr_val = mb_substr($qr_val, 0, 500);
+        $qr_custom_size = (int)$this->getOption('qr_size', 0);
 
-        $btn_id = 'sticker_btn_' . uniqid();
+        $json_flags = JSON_HEX_TAG | JSON_HEX_APOS | JSON_HEX_QUOT | JSON_HEX_AMP | JSON_UNESCAPED_UNICODE;
+        $btn_id = 'st_' . bin2hex(random_bytes(6));
+        $item_id = $this->item['id'] ?? time();
+        
+        cmsTemplate::getInstance()->addCSS('https://fonts.googleapis.com/css2?family=Montserrat:wght@700&family=Roboto:wght@700&display=swap');
         cmsTemplate::getInstance()->addJS('https://cdnjs.cloudflare.com/ajax/libs/qrious/4.0.2/qrious.min.js');
 
-        $json_print_data = json_encode($print_data, JSON_UNESCAPED_UNICODE);
-        $json_qr_data = json_encode($qr_data, JSON_UNESCAPED_UNICODE);
-        $json_img_url = json_encode($print_image_url, JSON_UNESCAPED_UNICODE);
+        ob_start(); 
+        
+        if (!defined('STICKER_CSS_LOADED')) { 
+            define('STICKER_CSS_LOADED', true); 
+        ?>
+        <style>
+            .sticker-btn-icon { margin-right: 8px; width: 16px; height: 16px; fill: currentColor; vertical-align: text-bottom; }
+            .sticker-overlay {
+                position: fixed; top: 0; left: 0; width: 100%; height: 100%;
+                background-color: rgba(0,0,0,0.85); z-index: 100000; display: flex;
+                flex-direction: column; justify-content: center; align-items: center; backdrop-filter: blur(4px);
+            }
+        </style>
+        <?php } ?>
 
-        $html = <<<HTML
-        <div class="sticker-field-wrap" style="margin: 15px 0;">
-            <button type="button" class="button" id="{$btn_id}">
-                {$button_text}
-            </button>
-        </div>
+        <button type="button" class="btn btn-outline-primary" id="<?php echo $btn_id; ?>">
+            <svg class="sticker-btn-icon" viewBox="0 0 512 512"><path d="M448 192V77.25c0-8.49-3.37-16.62-9.37-22.63L393.37 9.37c-6-6-14.14-9.37-22.63-9.37H96C78.33 0 64 14.33 64 32v160c-35.35 0-64 28.65-64 64v128c0 35.35 28.65 64 64 64h384c35.35 0 64-28.65 64-64V256c0-35.35-28.65-64-64-64zm-320-128h224v64H128V64zm320 320H64V256h384v128zM128 448h256v64H128z"/></svg>
+            <?php echo $btn_text; ?>
+        </button>
 
         <script>
         document.addEventListener("DOMContentLoaded", function() {
-            var btn = document.getElementById('{$btn_id}');
+            var btn = document.getElementById('<?php echo $btn_id; ?>');
             if (!btn) return;
-            
-            btn.addEventListener('click', async function() {
-                var width = {$width};
-                var height = {$height};
-                var printData = {$json_print_data};
-                var qrData = {$json_qr_data};
-                var imageUrl = {$json_img_url};
-                
-                var canvas = document.createElement('canvas');
-                canvas.width = width;
-                canvas.height = height;
-                var ctx = canvas.getContext('2d');
 
-                ctx.fillStyle = '#FFFFFF';
-                ctx.fillRect(0, 0, width, height);
+            btn.onclick = function() {
+                if (document.getElementById('sticker-overlay')) return;
 
-                var rightBlockSize = 0;
-                var qrSize = qrData ? Math.min(80, height / 2 - 10) : 0;
-                var imgSize = imageUrl ? Math.min(80, height / 2 - 10) : 0;
-                if (qrSize > 0 || imgSize > 0) {
-                    rightBlockSize = Math.max(qrSize, imgSize) + 15;
-                }
+                document.fonts.ready.then(function() {
+                    var canvas = document.createElement('canvas');
+                    
+                    var scale = 2;
+                    var baseW = <?php echo $width; ?>;
+                    var baseH = <?php echo $height; ?>;
+                    
+                    canvas.width = baseW * scale; 
+                    canvas.height = baseH * scale;
+                    var ctx = canvas.getContext('2d');
+                    
+                    ctx.scale(scale, scale);
+                    ctx.imageSmoothingEnabled = false; // Отключаем размытие
 
-                function loadStickerImage(url) {
-                    return new Promise(function(resolve) {
-                        var img = new Image();
-                        img.crossOrigin = 'Anonymous';
-                        img.onload = function() { resolve(img); };
-                        img.onerror = function() { resolve(null); };
-                        img.src = url;
-                    });
-                }
+                    ctx.fillStyle = '#FFFFFF'; 
+                    ctx.fillRect(0, 0, baseW, baseH);
+                    ctx.fillStyle = '#000000'; 
+                    ctx.textBaseline = 'top';
 
-                if (imageUrl) {
-                    var loadedImg = await loadStickerImage(imageUrl);
-                    if (loadedImg) {
-                        ctx.drawImage(loadedImg, width - imgSize - 10, 10, imgSize, imgSize);
-                    }
-                }
+                    var curX = 15; 
+                    var curY = 15; 
+                    var rowMaxHeight = 0;
+                    
+                    var layers = <?php echo json_encode($layers, $json_flags); ?>;
+                    var fontName = <?php echo json_encode($font_family, $json_flags); ?>;
 
-                ctx.fillStyle = '#000000';
-                ctx.textBaseline = 'top';
-                var currentY = 15;
-                var paddingX = 15;
-                var maxTextWidth = width - paddingX * 2 - rightBlockSize;
-
-                function wrapText(context, text, x, y, maxWidth, lineHeight) {
-                    var words = String(text).split(' ');
-                    var line = '';
-                    for(var n = 0; n < words.length; n++) {
-                        var testLine = line + words[n] + ' ';
-                        var metrics = context.measureText(testLine);
-                        if (metrics.width > maxWidth && n > 0) {
-                            context.fillText(line, x, y);
-                            line = words[n] + ' ';
-                            y += lineHeight;
-                        } else {
-                            line = testLine;
+                    layers.forEach(function(l) {
+                        ctx.font = 'bold ' + l.size + 'pt "' + fontName + '", sans-serif';
+                        var metrics = ctx.measureText(l.text);
+                        var tWidth = metrics.width;
+                        var tHeight = l.size * 1.4;
+                        
+                        var maxWidth = baseW - curX - 15;
+                        if (maxWidth > 10) {
+                            ctx.fillText(l.text, Math.floor(curX), Math.floor(curY), Math.floor(maxWidth));
                         }
+
+                        if (l.flow === 'next') {
+                            curY += Math.max(tHeight, rowMaxHeight) + 5;
+                            curX = 15; 
+                            rowMaxHeight = 0;
+                        } else {
+                            curX += Math.min(tWidth, maxWidth) + 15;
+                            rowMaxHeight = Math.max(rowMaxHeight, tHeight);
+                        }
+                    });
+
+                    var qrVal = <?php echo json_encode($qr_val, $json_flags); ?>;
+                    var customQrSize = <?php echo $qr_custom_size; ?>;
+                    
+                    if (qrVal && typeof QRious !== 'undefined') {
+                        var qrSizeLog = customQrSize > 0 
+                            ? Math.min(customQrSize, baseW - 20, baseH - 20) 
+                            : Math.min(85, Math.floor(baseH / 2));
+                            
+                        var qrTemp = document.createElement('canvas');
+                        new QRious({element: qrTemp, value: qrVal, size: qrSizeLog * scale, level: 'M'});
+                        
+                        ctx.drawImage(qrTemp, Math.floor(baseW - qrSizeLog - 10), Math.floor(baseH - qrSizeLog - 10), qrSizeLog, qrSizeLog);
                     }
-                    context.fillText(line, x, y);
-                    return y + lineHeight;
-                }
 
-                var isFirst = true;
-                for (var key in printData) {
-                    var text = printData[key];
-                    if (!text) continue;
+                    var dataUrl = canvas.toDataURL('image/png');
+                    var overlay = document.createElement('div');
+                    overlay.id = 'sticker-overlay'; 
+                    overlay.className = 'sticker-overlay';
+                    
+                    var imgId = 'st_img_' + Math.round(Math.random()*1000000);
+                    var linkId = 'st_link_' + Math.round(Math.random()*1000000);
 
-                    if (isFirst) {
-                        ctx.font = 'bold 18px Arial Black, sans-serif';
-                        currentY = wrapText(ctx, text, paddingX, currentY, maxTextWidth, 22);
-                        currentY += 10;
-                        isFirst = false;
-                    } else {
-                        ctx.font = 'bold 14px Courier New, monospace';
-                        currentY = wrapText(ctx, text, paddingX, currentY, maxTextWidth, 18);
-                    }
-                }
+                    overlay.innerHTML = 
+                        '<div style="background:#fff; padding:10px; border-radius:4px; box-shadow:0 15px 35px rgba(0,0,0,0.5)">' +
+                            '<img id="' + imgId + '" style="display:block; border:1px solid #ddd; width:'+baseW+'px; height:'+baseH+'px">' +
+                        '</div>' +
+                        '<div style="margin-top:25px; display:flex; gap:15px">' +
+                            '<a id="' + linkId + '" download="sticker_<?php echo $item_id; ?>.png" class="btn btn-success">Скачать PNG</a>' +
+                            '<button type="button" class="btn btn-danger close-st-btn">Закрыть</button>' +
+                        '</div>';
+                        
+                    document.body.appendChild(overlay);
 
-                if (qrData && typeof QRious !== 'undefined') {
-                    var qrCanvas = document.createElement('canvas');
-                    new QRious({ element: qrCanvas, value: String(qrData), size: qrSize, level: 'M' });
-                    ctx.drawImage(qrCanvas, width - qrSize - 10, height - qrSize - 10);
-                }
+                    document.getElementById(imgId).src = dataUrl;
+                    document.getElementById(linkId).href = dataUrl;
 
-                var dataUrl = canvas.toDataURL('image/png');
-                
-                var overlay = document.createElement('div');
-                overlay.style.position = 'fixed';
-                overlay.style.top = '0';
-                overlay.style.left = '0';
-                overlay.style.width = '100%';
-                overlay.style.height = '100%';
-                overlay.style.backgroundColor = 'rgba(0,0,0,0.8)';
-                overlay.style.zIndex = '99999';
-                overlay.style.display = 'flex';
-                overlay.style.flexDirection = 'column';
-                overlay.style.justifyContent = 'center';
-                overlay.style.alignItems = 'center';
-                overlay.style.backdropFilter = 'blur(3px)';
-                
-                var img = document.createElement('img');
-                img.src = dataUrl;
-                img.style.border = '3px solid white';
-                img.style.borderRadius = '4px';
-                img.style.boxShadow = '0 10px 25px rgba(0,0,0,0.5)';
-                img.style.maxWidth = '90%';
-                img.style.maxHeight = '70%';
-                img.style.imageRendering = 'pixelated'; // Чтобы пиксели не мылились
-                
-                var downloadBtn = document.createElement('a');
-                downloadBtn.href = dataUrl;
-                downloadBtn.download = 'sticker_' + Math.floor(Date.now() / 1000) + '.png';
-                downloadBtn.innerHTML = 'Скачать картинку (.png)';
-                downloadBtn.style.marginTop = '20px';
-                downloadBtn.style.padding = '10px 20px';
-                downloadBtn.style.backgroundColor = '#4CAF50';
-                downloadBtn.style.color = 'white';
-                downloadBtn.style.textDecoration = 'none';
-                downloadBtn.style.borderRadius = '3px';
-                downloadBtn.style.fontFamily = 'sans-serif';
-                downloadBtn.style.fontWeight = 'bold';
-                
-                var hintText = document.createElement('div');
-                hintText.innerHTML = 'Кликните на темный фон, чтобы закрыть';
-                hintText.style.color = '#ccc';
-                hintText.style.marginTop = '15px';
-                hintText.style.fontFamily = 'sans-serif';
-                hintText.style.fontSize = '12px';
-                
-                overlay.appendChild(img);
-                overlay.appendChild(downloadBtn);
-                overlay.appendChild(hintText);
-                
-                overlay.addEventListener('click', function(e) {
-                    if (e.target === overlay || e.target === hintText) {
-                        document.body.removeChild(overlay);
-                    }
+                    var closeFn = function() {
+                        if (document.body.contains(overlay)) {
+                            document.body.removeChild(overlay);
+                        }
+                        document.removeEventListener('keydown', keyHandler);
+                    };
+
+                    var keyHandler = function(e) {
+                        if (e.key === 'Escape') closeFn();
+                    };
+                    document.addEventListener('keydown', keyHandler);
+
+                    overlay.querySelector('.close-st-btn').onclick = closeFn;
+                    overlay.onclick = function(e) {
+                        if (e.target === overlay) closeFn();
+                    };
                 });
-                
-                document.body.appendChild(overlay);
-            });
+            };
         });
         </script>
-HTML;
-
-        return $html;
+        <?php 
+        $html = ob_get_clean();
+        return $html !== false ? $html : '';
     }
 
-    public function getInput($value) {
-        return ;
-    }
+    public function getInput($value) { return ; }
 }
