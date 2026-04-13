@@ -10,7 +10,7 @@
   * [expenses.php](https://github.com/Jestik/crm-icms2/blob/main/package/system/fields/expenses.php) — CRM Калькулятор, считает расходы и доходы участников сделки
   * [multifile.php](https://github.com/Jestik/crm-icms2/blob/main/package/system/fields/multifile.php) — Мультифайл (список файлов), позволяет загружать файлы к записи
   * [phone.php](https://github.com/Jestik/crm-icms2/blob/main/package/system/fields/phone.php) — Телефон с мессенджерами, выводит телефон и мессенджеры
-  * [profit.php](https://github.com/Jestik/crm-icms2/blob/main/package/system/fields/profit.php) — Окупаемость / Прибыль, считает сумму дочерних записей типа контента
+  * [profit.php](https://github.com/Jestik/crm-icms2/blob/main/package/system/fields/profit.php) — Окупаемость / Прибыль, считает сумму дочерних записей типа контента и вычисляет разницу между стоимостью родительской записи
   * [recordid.php](https://github.com/Jestik/crm-icms2/blob/main/package/system/fields/recordid.php) — ID записи, выводит ID записи, возможно использовать как артикул
   * [tripcost.php](https://github.com/Jestik/crm-icms2/blob/main/package/system/fields/tripcost.php) — Калькулятор поездки, считает стоимость поездки с амортизацией ТС
   * [sticker.php](https://github.com/Jestik/crm-icms2/blob/main/package/system/fields/sticker.php) — Генератор картинки с нужными полями (Например наклеек для термопринтера)
