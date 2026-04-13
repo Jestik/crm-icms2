@@ -15,6 +15,7 @@
   * [tripcost.php](https://github.com/Jestik/crm-icms2/blob/main/package/system/fields/tripcost.php) — Калькулятор поездки, считает стоимость поездки с амортизацией ТС
   * [sticker.php](https://github.com/Jestik/crm-icms2/blob/main/package/system/fields/sticker.php) — Генератор картинки с нужными полями (Например наклеек для термопринтера)
   * [images.php](https://github.com/Jestik/crm-icms2/blob/main/package/system/fields/images.php) — Модификация стандартного поля "Набор изображений", добавляет функцию "Сделать фото" для телефона сразу при добавлении записи
+  * [parentsum.php](https://github.com/Jestik/crm-icms2/blob/main/package/system/fields/parentsum.php) — Сумма родительских записей, считает сумму родительских записей (в вложенном типе контента)
 * **Виджеты:**
   * [crm_chart](https://github.com/Jestik/crm-icms2/tree/main/package/system/widgets/crm_chart) — выводит график сделок, есть кое какие настройки, по датам и что выводить
 * **Шаблоны вывода списка:**
