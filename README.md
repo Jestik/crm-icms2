@@ -22,7 +22,8 @@
   * [default_list_tableplus.tpl.php](https://github.com/Jestik/crm-icms2/blob/main/package/templates/modern/content/default_list_tableplus.tpl.php) — стиль для отображения сделок
   * [default_list_tabletrip.tpl.php](https://github.com/Jestik/crm-icms2/blob/main/package/templates/modern/content/default_list_tabletrip.tpl.php) — стиль для отображения поездок
 * **Шаблон виджета:**
-  * [crm_chart.tpl.php](https://github.com/Jestik/crm-icms2/blob/main/package/templates/modern/widgets/crm_chart/crm_chart.tpl.php) — стиль для отображения виджета
+  * [crm_chart.tpl.php](https://github.com/Jestik/crm-icms2/blob/main/package/templates/modern/widgets/crm_chart/crm_chart.tpl.php) — стиль для отображения виджета с графиками сделок
+  * [trip.tpl.php](https://github.com/Jestik/crm-icms2/blob/main/package/templates/modern/controllers/content/widgets/list/trip.tpl.php) — стиль для отображения виджета поездок
 
 
 ---
