@@ -20,6 +20,7 @@
   * [crm_chart](https://github.com/Jestik/crm-icms2/tree/main/package/system/widgets/crm_chart) — выводит график сделок, есть кое какие настройки, по датам и что выводить
 * **Шаблоны вывода списка:**
   * [default_list_tableplus.tpl.php](https://github.com/Jestik/crm-icms2/blob/main/package/templates/modern/content/default_list_tableplus.tpl.php) — стиль для отображения сделок
+  * [default_list_tabletrip.tpl.php](https://github.com/Jestik/crm-icms2/blob/main/package/templates/modern/content/default_list_tabletrip.tpl.php) — стиль для отображения поездок
 * **Шаблон виджета:**
   * [crm_chart.tpl.php](https://github.com/Jestik/crm-icms2/blob/main/package/templates/modern/widgets/crm_chart/crm_chart.tpl.php) — стиль для отображения виджета
 
