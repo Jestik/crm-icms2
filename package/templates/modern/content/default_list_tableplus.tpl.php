@@ -62,6 +62,36 @@ if( $ctype['options']['list_show_filter'] ) {
     ];
 
     $grouped_fields = ['title', $cfg_recordid, $cfg_datepub, $cfg_verkauf, $cfg_income, $cfg_expenses];
+
+    // --- ДОБАВЛЕНО: Получаем имена пользователей по их ID из всех сделок ---
+    $all_user_ids = [];
+    foreach ($items as $itm) {
+        if (!empty($itm[$cfg_expenses])) {
+            $exp_data = json_decode($itm[$cfg_expenses], true);
+            if (is_array($exp_data)) {
+                foreach ($exp_data as $e) {
+                    if (!empty($e['user_id'])) {
+                        $all_user_ids[] = (int)$e['user_id'];
+                    }
+                }
+            }
+        }
+    }
+    
+    $real_users = [];
+    if (!empty($all_user_ids)) {
+        $all_user_ids = array_unique($all_user_ids);
+        $users_model = cmsCore::getModel('users');
+        $users_model->selectOnly('id')->select('nickname');
+        $users_model->filterIn('id', $all_user_ids);
+        $fetched_users = $users_model->get('users');
+        if ($fetched_users) {
+            foreach ($fetched_users as $fu) {
+                $real_users[$fu['id']] = $fu['nickname'];
+            }
+        }
+    }
+    // ------------------------------------------------------------------------
 ?>
 
 <div class="content_list table <?php echo $ctype['name']; ?>_list table-responsive-md mt-3 mt-md-4">
@@ -183,8 +213,10 @@ if( $ctype['options']['list_show_filter'] ) {
                         if (is_array($expenses_data)) {
                             foreach($expenses_data as $exp){
                                 $cost = isset($exp['cost']) ? (float)$exp['cost'] : 0;
-                                $uid = isset($exp['user_id']) ? $exp['user_id'] : 0;
-                                $uname = isset($exp['user_name']) ? $exp['user_name'] : 'Неизвестный';
+                                $uid = isset($exp['user_id']) ? (int)$exp['user_id'] : 0;
+                                
+                                // Изменено: берем имя по ID из загруженного массива
+                                $uname = ($uid > 0 && isset($real_users[$uid])) ? $real_users[$uid] : 'Неизвестный';
                                 
                                 $total_expenses += $cost;
                                 if ($uid) {
